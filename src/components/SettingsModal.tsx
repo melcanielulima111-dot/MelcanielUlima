@@ -464,17 +464,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* System Info & Credits */}
-          <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2 text-center text-xs text-slate-400">
+          <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2.5 text-center text-xs text-slate-400">
             <div className="flex items-center justify-center gap-1 font-bold text-white">
               <span>CalFéx Pro</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">v2.5</span>
             </div>
-            <p className="text-[11px]">
+            <p className="text-[11px] text-slate-300 font-medium">
               Sistema de Gestão de Notas & Pautas Escolares
             </p>
-            <p className="text-[10px] text-slate-500">
-              Desenvolvido com excelência por <span className="text-slate-300 font-bold">Melcaniel Ulima</span>.
-            </p>
+            <div className="pt-1 border-t border-slate-800/80 space-y-1 text-[11px]">
+              <p className="text-slate-300 font-semibold">
+                Criador: <span className="text-white font-bold">Melcaniel Ulima</span>
+              </p>
+              <div className="text-[10px] text-slate-400 space-y-0.5">
+                <p>Filiação: Inocêncio Ulima e Ana Paula Ulima</p>
+                <p className="text-slate-300 font-medium">Paula Fernanda Ulima</p>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                Angola 🇦🇴
+              </p>
+            </div>
           </div>
 
           {/* ZONA DE PERIGO: LOGOUT E ELIMINAR CONTA */}

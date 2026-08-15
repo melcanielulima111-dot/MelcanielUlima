@@ -111,9 +111,11 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
             <p className="text-xs text-slate-800 dark:text-slate-200 font-semibold">
               Criado e concebido por Melcaniel Ulima
             </p>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Filho de Inocêncio Ulima e Ana Paula Ulima • Nascido aos 06 de Outubro de 2010. Todos os direitos reservados.
-            </p>
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5">
+              <p>Filiação: Inocêncio Ulima e Ana Paula Ulima</p>
+              <p className="text-slate-600 dark:text-slate-300 font-medium">Paula Fernanda Ulima</p>
+              <p>Todos os direitos reservados.</p>
+            </div>
           </div>
 
         </div>

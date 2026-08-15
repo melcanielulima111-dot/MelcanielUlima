@@ -15,7 +15,7 @@ import {
   getStoredSecuritySettings, 
   saveSecuritySettings 
 } from './utils/security';
-import { syncStudentDataToCloud } from './utils/cloudSync';
+import { syncStudentDataToCloud, fetchStudentDataFromCloud } from './utils/cloudSync';
 import { Header } from './components/Header';
 import { BottomNavigation } from './components/BottomNavigation';
 import { HomeDashboard } from './components/HomeDashboard';
@@ -137,6 +137,26 @@ export default function App() {
     document.documentElement.classList.add('dark');
     document.body.className = 'bg-slate-950 text-slate-100 antialiased min-h-screen';
   }, []);
+
+  // Hydrate student data from cloud on startup if available
+  useEffect(() => {
+    if (student && student.id) {
+      fetchStudentDataFromCloud(student.id).then((cloudData) => {
+        if (cloudData && cloudData.success) {
+          if (cloudData.subjects && Array.isArray(cloudData.subjects)) {
+            setSubjects(cloudData.subjects);
+            localStorage.setItem(`calfex_subjects_${student.id}`, JSON.stringify(cloudData.subjects));
+          }
+          if (cloudData.student) {
+            setStudent(cloudData.student);
+          }
+          if (cloudData.targetGrade) {
+            setTargetGrade(cloudData.targetGrade);
+          }
+        }
+      });
+    }
+  }, [student?.id]);
 
   // When student changes (login/switch account), load their specific subjects
   const handleLoginSuccess = (profile: StudentProfile) => {
@@ -353,6 +373,15 @@ export default function App() {
         student={student}
         securitySettings={securitySettings}
         onUnlock={() => setIsAppLocked(false)}
+        onUpdateSecuritySettings={(newSec) => {
+          setSecuritySettings(newSec);
+          saveSecuritySettings(newSec);
+        }}
+        onLogout={() => {
+          setStudent(null);
+          setIsAppLocked(false);
+          localStorage.removeItem(STORAGE_KEYS.ACTIVE_STUDENT);
+        }}
       />
     );
   }

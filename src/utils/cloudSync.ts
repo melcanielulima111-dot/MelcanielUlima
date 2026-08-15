@@ -115,6 +115,9 @@ export async function requestPasswordReset(identifier: string): Promise<{
   maskedEmail?: string;
   studentName?: string;
   code?: string;
+  emailSent?: boolean;
+  emailReason?: string;
+  expiresInSeconds?: number;
 }> {
   try {
     const res = await fetch('/api/accounts/forgot-password', {
@@ -127,6 +130,32 @@ export async function requestPasswordReset(identifier: string): Promise<{
   } catch (err) {
     console.warn('Request password reset error:', err);
     return { success: false, message: 'Erro de conexão com o servidor. Verifique a sua rede.' };
+  }
+}
+
+/**
+ * Send general email verification code
+ */
+export async function sendEmailVerificationCode(email: string, name?: string): Promise<{
+  success: boolean;
+  message: string;
+  email?: string;
+  maskedEmail?: string;
+  emailSent?: boolean;
+  emailReason?: string;
+  expiresInSeconds?: number;
+}> {
+  try {
+    const res = await fetch('/api/auth/send-verification-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name }),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    console.warn('Send email verification code error:', err);
+    return { success: false, message: 'Erro de conexão com o servidor de e-mail.' };
   }
 }
 

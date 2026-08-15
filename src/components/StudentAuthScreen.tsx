@@ -104,8 +104,6 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
   const [forgotTargetEmail, setForgotTargetEmail] = useState('');
   const [forgotMaskedEmail, setForgotMaskedEmail] = useState('');
   const [forgotStudentName, setForgotStudentName] = useState('');
-  const [simulatedEmailCode, setSimulatedEmailCode] = useState<string | null>(null);
-  const [copiedCode, setCopiedCode] = useState(false);
 
   const [forgotCode, setForgotCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -180,10 +178,17 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
         setForgotTargetEmail(res.email);
         setForgotMaskedEmail(res.maskedEmail || res.email);
         setForgotStudentName(res.studentName || 'Estudante');
-        setSimulatedEmailCode(res.code || Math.floor(100000 + Math.random() * 900000).toString());
         setForgotStep('verify');
-        setResendCooldown(60);
+        setResendCooldown(65);
         setForgotLoading(false);
+
+        if (res.emailSent) {
+          setForgotSuccessMsg(`Código de 6 dígitos enviado para ${res.maskedEmail || res.email}!`);
+          console.log('[CALFÉX EMAIL STATUS] ✅ Código enviado com sucesso via Gmail para:', res.email);
+        } else {
+          console.warn('[CALFÉX EMAIL STATUS] ⚠️ Código gerado mas envio via SMTP pendente de configuração:', res.emailReason || res.message);
+          setForgotError(res.message || 'Código gerado. Verifique as credenciais do Gmail no servidor.');
+        }
         return;
       } else if (res && !res.success && res.message) {
         // Check local accounts as fallback
@@ -195,7 +200,6 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
         );
 
         if (localFound) {
-          const generatedCode = Math.floor(100000 + Math.random() * 900000).toString();
           const target = localFound.email;
           const atIdx = target.indexOf('@');
           const masked = atIdx > 2 ? `${target[0]}***${target[atIdx - 1]}${target.substring(atIdx)}` : target;
@@ -203,15 +207,15 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
           setForgotTargetEmail(target);
           setForgotMaskedEmail(masked);
           setForgotStudentName(localFound.name);
-          setSimulatedEmailCode(generatedCode);
           setForgotStep('verify');
-          setResendCooldown(60);
+          setResendCooldown(65);
           setForgotLoading(false);
           return;
         }
 
         setForgotLoading(false);
         setForgotError(res.message);
+        console.error('[CALFÉX RESET CODE ERROR]', res);
         return;
       }
     } catch (err) {
@@ -228,7 +232,6 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
 
     setForgotLoading(false);
     if (localFound) {
-      const generatedCode = Math.floor(100000 + Math.random() * 900000).toString();
       const target = localFound.email;
       const atIdx = target.indexOf('@');
       const masked = atIdx > 2 ? `${target[0]}***${target[atIdx - 1]}${target.substring(atIdx)}` : target;
@@ -236,9 +239,8 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
       setForgotTargetEmail(target);
       setForgotMaskedEmail(masked);
       setForgotStudentName(localFound.name);
-      setSimulatedEmailCode(generatedCode);
       setForgotStep('verify');
-      setResendCooldown(60);
+      setResendCooldown(65);
     } else {
       setForgotError('Nenhuma conta encontrada com essas informações na nuvem nem neste dispositivo. Verifique se digitou corretamente.');
     }
@@ -252,33 +254,22 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
     try {
       const res = await requestPasswordReset(forgotTargetEmail || forgotIdentifier);
       if (res && res.success) {
-        setSimulatedEmailCode(res.code || Math.floor(100000 + Math.random() * 900000).toString());
-        setResendCooldown(60);
-        setForgotSuccessMsg('Novo código enviado para o seu e-mail!');
-        setTimeout(() => setForgotSuccessMsg(null), 4000);
+        setResendCooldown(65);
+        if (res.emailSent) {
+          setForgotSuccessMsg('Novo código enviado com sucesso para o seu e-mail!');
+        } else {
+          setForgotError(res.message || 'Código gerado, envio via SMTP pendente de configuração.');
+        }
+        setTimeout(() => setForgotSuccessMsg(null), 5000);
       } else {
-        const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-        setSimulatedEmailCode(newCode);
-        setResendCooldown(60);
-        setForgotSuccessMsg('Novo código gerado com sucesso!');
-        setTimeout(() => setForgotSuccessMsg(null), 4000);
+        setResendCooldown(65);
+        setForgotError(res?.message || 'Falha ao reenviar código.');
       }
     } catch (e) {
-      const newCode = Math.floor(100000 + Math.random() * 900000).toString();
-      setSimulatedEmailCode(newCode);
-      setResendCooldown(60);
+      setResendCooldown(65);
+      setForgotError('Erro de conexão ao reenviar código.');
     }
     setForgotLoading(false);
-  };
-
-  // Copy code to clipboard and auto-fill input
-  const handleCopyAndFillCode = (code: string) => {
-    setForgotCode(code);
-    setCopiedCode(true);
-    try {
-      navigator.clipboard.writeText(code);
-    } catch (e) {}
-    setTimeout(() => setCopiedCode(false), 3000);
   };
 
   // Submit New Password Reset
@@ -289,12 +280,6 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
     const cleanCode = forgotCode.trim();
     if (!cleanCode || cleanCode.length < 4) {
       setForgotError('Por favor, insira o código de segurança de 6 dígitos que foi enviado para o seu e-mail.');
-      return;
-    }
-
-    // Verify if code matches simulated code if set locally
-    if (simulatedEmailCode && cleanCode !== simulatedEmailCode) {
-      setForgotError('Código de segurança incorreto. Verifique os 6 dígitos recebidos no e-mail.');
       return;
     }
 
@@ -329,22 +314,6 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
         setForgotLoading(false);
         return;
       } else if (resetRes && !resetRes.success && resetRes.message) {
-        // Fallback for local update if code matched
-        if (simulatedEmailCode && cleanCode === simulatedEmailCode) {
-          const updated = registeredAccounts.map(acc => {
-            if (acc.email.toLowerCase() === forgotTargetEmail.toLowerCase() || (acc.name && acc.name.toLowerCase() === forgotStudentName.toLowerCase())) {
-              return { ...acc, password: newPassword.trim() };
-            }
-            return acc;
-          });
-          setRegisteredAccounts(updated);
-          localStorage.setItem(REGISTERED_ACCOUNTS_KEY, JSON.stringify(updated));
-          const matched = updated.find(a => a.email.toLowerCase() === forgotTargetEmail.toLowerCase()) || null;
-          setRecoveredStudent(matched);
-          setForgotStep('success');
-          setForgotLoading(false);
-          return;
-        }
         setForgotLoading(false);
         setForgotError(resetRes.message);
         return;
@@ -1340,41 +1309,29 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
             {forgotStep === 'verify' && (
               <form onSubmit={handleConfirmResetPassword} className="space-y-4">
                 
-                {/* Simulated Email Notification Toast Banner */}
-                {simulatedEmailCode && (
-                  <div className="p-4 rounded-2xl bg-gradient-to-r from-sky-900/40 via-blue-900/40 to-indigo-900/40 border border-sky-500/40 shadow-lg shadow-sky-500/10 space-y-2.5 animate-in fade-in slide-in-from-top-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-sky-300 font-bold text-xs">
-                        <Inbox className="w-4 h-4 text-sky-400 animate-pulse" />
-                        <span>Notificação de E-mail (CalFéx Cloud Security)</span>
-                      </div>
-                      <span className="text-[10px] text-sky-400/80 bg-sky-500/20 px-2 py-0.5 rounded-full border border-sky-500/30">
-                        Recebido agora
-                      </span>
+                {/* Professional Email Instructions Card */}
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 via-indigo-500/10 to-sky-500/10 dark:from-blue-950/40 dark:via-indigo-950/40 dark:to-sky-950/40 border border-blue-500/20 dark:border-blue-500/30 text-xs space-y-2.5 animate-in fade-in slide-in-from-top-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 font-bold text-xs">
+                      <Mail className="w-4 h-4 text-blue-500 animate-pulse" />
+                      <span>Código enviado para o seu E-mail</span>
                     </div>
+                    <span className="text-[10px] text-blue-600 dark:text-blue-300 font-semibold bg-blue-500/15 dark:bg-blue-500/25 px-2 py-0.5 rounded-full border border-blue-500/30">
+                      {forgotMaskedEmail}
+                    </span>
+                  </div>
 
-                    <div className="text-xs text-slate-200">
-                      Olá <strong>{forgotStudentName}</strong>, recebemos a solicitação de redefinição de senha para <strong>{forgotMaskedEmail}</strong>.
-                    </div>
+                  <p className="text-slate-600 dark:text-slate-300 text-xs leading-relaxed">
+                    Olá <strong>{forgotStudentName}</strong>, enviamos um código de verificação de 6 dígitos a partir de <strong>calfex39@gmail.com</strong> para o e-mail <strong>{forgotTargetEmail || forgotMaskedEmail}</strong>. Abra a sua caixa de entrada, copie os 6 dígitos e cole-os abaixo (validade: <strong>10 minutos</strong>).
+                  </p>
 
-                    <div className="flex items-center justify-between gap-3 bg-slate-900/80 p-2.5 rounded-xl border border-sky-500/30">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-slate-400 font-medium">Código de Segurança:</span>
-                        <span className="font-mono text-base font-black tracking-widest text-sky-300">
-                          {simulatedEmailCode}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleCopyAndFillCode(simulatedEmailCode)}
-                        className="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
-                      >
-                        {copiedCode ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copiedCode ? 'Preenchido!' : 'Copiar & Preencher'}</span>
-                      </button>
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400 bg-white/60 dark:bg-slate-900/80 p-2.5 rounded-xl border border-blue-500/20">
+                    <div className="flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>Remetente: <strong className="text-blue-500">calfex39@gmail.com</strong> (verifique o Spam se necessário).</span>
                     </div>
                   </div>
-                )}
+                </div>
 
                 {/* 6-Digit Code Input */}
                 <div>

@@ -1,14 +1,176 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+import nodemailer from 'nodemailer';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+// Secure password hashing and verification
+function hashPassword(password: string): string {
+  if (!password) return '';
+  return crypto.createHash('sha256').update(password.toString().trim() + '_calfex_salt_v2').digest('hex');
+}
+
+function verifyPassword(inputPassword: string, storedPasswordOrHash: string): boolean {
+  if (!inputPassword || !storedPasswordOrHash) return false;
+  const inputClean = inputPassword.toString().trim();
+  const storedClean = storedPasswordOrHash.toString().trim();
+  return (
+    storedClean === inputClean ||
+    storedClean === hashPassword(inputClean)
+  );
+}
+
+// Official CalFéx Sender Email
+const rawSender = process.env.CALFEX_SENDER_EMAIL;
+const CALFEX_SENDER_EMAIL = (typeof rawSender === 'string' && rawSender.includes('@')) 
+  ? rawSender.trim() 
+  : 'calfex39@gmail.com';
+
+// Setup email transporter options for real sending with fallback
+function getCleanEmailPassword(): string | null {
+  const rawPass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASSWORD || process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || process.env.CALFEX_EMAIL_PASSWORD || 'nsey fvmg vgdu stzd';
+  if (!rawPass || typeof rawPass !== 'string' || rawPass.trim() === '') {
+    return null;
+  }
+  // Sanitize password by stripping quotes (" or ') and all spaces/newlines
+  const clean = rawPass.replace(/["']/g, '').replace(/\s+/g, '').trim();
+  return clean || null;
+}
+
+// Send real verification email with custom CalFéx Pro branding and connection fallbacks
+async function sendCalfexVerificationEmail(toEmail: string, studentName: string, code: string): Promise<{ sent: boolean; reason?: string }> {
+  const cleanPass = getCleanEmailPassword();
+
+  if (!cleanPass) {
+    console.warn(`[CALFÉX SENDER: ${CALFEX_SENDER_EMAIL}] ✉️ GMAIL_APP_PASSWORD não configurada no servidor. Código de 6 dígitos gerado para ${toEmail}: ${code}`);
+    return { sent: false, reason: 'GMAIL_APP_PASSWORD_MISSING' };
+  }
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="pt">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Código de Verificação CalFéx</title>
+      <style>
+        body { margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f8fafc; }
+        .container { max-width: 540px; margin: 30px auto; background: #1e293b; border-radius: 20px; overflow: hidden; border: 1px solid #334155; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+        .header { background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #06b6d4 100%); padding: 32px 24px; text-align: center; }
+        .logo-title { color: #ffffff; font-size: 26px; font-weight: 900; letter-spacing: -0.5px; margin: 0; }
+        .logo-sub { color: #bfdbfe; font-size: 13px; font-weight: 600; margin-top: 4px; letter-spacing: 0.5px; }
+        .content { padding: 32px 28px; }
+        .greeting { font-size: 18px; font-weight: 700; color: #f8fafc; margin-top: 0; margin-bottom: 12px; }
+        .text { font-size: 14px; line-height: 1.6; color: #94a3b8; margin: 0 0 20px 0; }
+        .code-box { background: #0f172a; border: 2px dashed #3b82f6; border-radius: 16px; padding: 22px; text-align: center; margin: 24px 0; }
+        .code-label { font-size: 13px; font-weight: 800; color: #60a5fa; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+        .code-number { font-size: 38px; font-weight: 900; color: #ffffff; letter-spacing: 10px; font-family: monospace; }
+        .notice { font-size: 12px; color: #cbd5e1; background: rgba(59, 130, 246, 0.12); border-left: 4px solid #3b82f6; padding: 14px 16px; border-radius: 8px; margin-bottom: 24px; }
+        .footer { border-top: 1px solid #334155; padding: 20px 28px; text-align: center; font-size: 11px; color: #64748b; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1 class="logo-title">CalFéx Pro</h1>
+          <div class="logo-sub">SISTEMA DE GESTÃO ACADÊMICA & SEGURANÇA</div>
+        </div>
+        <div class="content">
+          <h2 class="greeting">Olá, ${studentName}!</h2>
+          <p class="text">
+            Este é o seu código de verificação de segurança no aplicativo <strong>CalFéx Pro</strong>:
+          </p>
+          
+          <div class="code-box">
+            <div class="code-label">Seu Código de Verificação</div>
+            <div class="code-number">${code}</div>
+          </div>
+          
+          <div class="notice">
+            ⏳ <strong>Validade:</strong> Este código expira em <strong>10 minutos</strong>. Insira os 6 dígitos no aplicativo para concluir a verificação da sua conta.
+          </div>
+          
+          <p class="text" style="font-size: 12px; color: #64748b; margin-bottom: 0;">
+            Mensagem enviada pelo e-mail oficial <strong>${CALFEX_SENDER_EMAIL}</strong> para <strong>${toEmail}</strong>.
+          </p>
+        </div>
+        <div class="footer">
+          &copy; ${new Date().getFullYear()} CalFéx Pro. Todos os direitos reservados.<br>
+          Remetente oficial: ${CALFEX_SENDER_EMAIL}
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  // Try multiple configurations (Gmail service, Gmail 465 SSL, Gmail 587 STARTTLS)
+  const configurations = [
+    {
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000
+    },
+    {
+      service: 'gmail',
+      auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
+      tls: { rejectUnauthorized: false }
+    },
+    {
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000
+    }
+  ];
+
+  let lastError: any = null;
+
+  for (const config of configurations) {
+    try {
+      const transporter = nodemailer.createTransport(config as any);
+      const info = await transporter.sendMail({
+        from: `"CalFéx Pro" <${CALFEX_SENDER_EMAIL}>`,
+        to: toEmail,
+        subject: `Este é o seu código de verificação: ${code} - CalFéx Pro`,
+        text: `Olá ${studentName},\n\nEste é o seu código de verificação: ${code}\n\nUtilize este código para confirmar a sua identidade no aplicativo CalFéx Pro.\nValidade: 10 minutos.\n\nRemetente: ${CALFEX_SENDER_EMAIL}`,
+        html: htmlContent
+      });
+      console.log(`[CALFÉX EMAIL DISPATCHED] ✅ E-mail enviado com sucesso de ${CALFEX_SENDER_EMAIL} para ${toEmail}. Message ID: ${info.messageId}`);
+      return { sent: true };
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = err?.message || String(err);
+      if (errMsg.includes('535') || errMsg.includes('Username and Password not accepted') || errMsg.includes('BadCredentials')) {
+        console.error(`[CALFÉX EMAIL AUTHENTICATION NOTICE] O Gmail recusou a autenticação para ${CALFEX_SENDER_EMAIL}.`);
+        console.error(`Dica: O Google exige uma "Senha de App" de 16 letras gerada em https://myaccount.google.com/apppasswords na conta ${CALFEX_SENDER_EMAIL}, e não a senha de login comum.`);
+        return { 
+          sent: false, 
+          reason: 'GMAIL_AUTH_535: O Gmail não aceitou o usuário ou a senha. É necessário gerar uma Senha de App de 16 caracteres em https://myaccount.google.com/apppasswords na conta calfex39@gmail.com com verificação em 2 etapas ativada.' 
+        };
+      }
+    }
+  }
+
+  const finalErrMsg = lastError?.message || String(lastError || 'SMTP Error');
+  console.error(`[CALFÉX EMAIL ERROR] Falha ao enviar e-mail de ${CALFEX_SENDER_EMAIL} para ${toEmail}:`, finalErrMsg);
+  return { sent: false, reason: finalErrMsg };
+}
 
 app.use(express.json({ limit: '15mb' }));
 
@@ -120,13 +282,15 @@ DIRETRIZES DE FORMATAÇÃO E RESPOSTA (REGRA CRÍTICA E OBRIGATÓRIA):
 
 4. SOBRE O CRIADOR:
    - Criador: Melcaniel Ulima
-   - Filiação: Filho de Inocêncio Ulima e Ana Paula Ulima
-   - Data de Nascimento: 06 de Outubro de 2010 (06/10/2010)
-   - País: Angola`;
+   - Filiação: Inocêncio Ulima e Ana Paula Ulima
+   - País: Angola
+   - REGRA MANDATÓRIA SOBRE O CRIADOR: Sempre que alguém perguntar sobre o criador, quem criou o aplicativo, sua autoria, filiação ou história, você deve responder com as informações do criador e, OBRIGATORIAMENTE no final de tudo da resposta, incluir exatamente:
+Paula Fernanda Ulima
+   - REGRA MANDATÓRIA SOBRE "PAULA FERNANDA ULIMA": Se algum usuário perguntar diretamente ou indiretamente quem é "Paula Fernanda Ulima", quem é "Paula Fernanda" ou qual o seu papel, você DEVE responder com naturalidade e brevidade que NÃO sabe quem ela é e não possui informações sobre essa pessoa (por exemplo: "Não disponho de informações sobre quem é Paula Fernanda Ulima.").`;
 
 // Response cleaner ensuring no unrequested $ or # appear in the reply
 function cleanAiResponse(text: string, userPrompt: string): string {
-  const lowerPrompt = userPrompt.toLowerCase();
+  const lowerPrompt = (userPrompt || '').toLowerCase();
   if (
     lowerPrompt.includes('latex') ||
     lowerPrompt.includes('dólar') ||
@@ -166,14 +330,19 @@ function cleanAiResponse(text: string, userPrompt: string): string {
 
 // Fallback intelligent responder without $ or #
 function generateLocalFallbackResponse(prompt: string): string {
-  const lower = prompt.toLowerCase();
+  const lower = (prompt || '').toLowerCase();
   
+  if (lower.includes('paula fernanda') || lower.includes('quem e paula') || lower.includes('quem é paula') || lower.includes('fernanda ulima')) {
+    return `Não disponho de informações sobre quem é Paula Fernanda Ulima.`;
+  }
+
   if (lower.includes('criador') || lower.includes('quem criou') || lower.includes('autor') || lower.includes('melcaniel') || lower.includes('ulima') || lower.includes('inocencio') || lower.includes('ana paula')) {
     return `🌟 **Criador do CalFéx Pro**
 - **Nome:** Melcaniel Ulima
-- **Filiação:** Filho de Inocêncio Ulima e Ana Paula Ulima
-- **Data de Nascimento:** 06/10/2010 (6 de Outubro de 2010)
-- **Origem:** Angola`;
+- **Filiação:** Inocêncio Ulima e Ana Paula Ulima
+- **Origem:** Angola
+
+Paula Fernanda Ulima`;
   }
 
   if (lower.includes('como funciona') || lower.includes('formula') || lower.includes('fórmula') || lower.includes('média') || lower.includes('pauta') || lower.includes('mac') || lower.includes('mfd') || lower.includes('t1') || lower.includes('t2') || lower.includes('t3')) {
@@ -234,7 +403,13 @@ function generateLocalFallbackResponse(prompt: string): string {
 // Get list of all registered student profiles in the cloud
 app.get('/api/accounts', (req, res) => {
   try {
-    const profiles = Object.values(cloudDatabase).map(r => r.profile).filter(Boolean);
+    const profiles = Object.values(cloudDatabase).map(r => {
+      if (!r.profile) return null;
+      const safe = { ...r.profile };
+      // Strip raw password from public profile listing
+      delete safe.password;
+      return safe;
+    }).filter(Boolean);
     res.json({ accounts: profiles });
   } catch (err) {
     res.status(500).json({ error: 'Erro ao listar contas na nuvem' });
@@ -267,9 +442,9 @@ app.post('/api/accounts/login', (req, res) => {
   if (matched) {
     const studentPass = matched.profile?.password || matched.securitySettings?.pinCode;
     
-    // If account has password and password was provided, verify it
+    // If account has password and password was provided, verify it securely
     if (studentPass && password) {
-      if (studentPass.toString().trim() !== password.toString().trim()) {
+      if (!verifyPassword(password.toString(), studentPass.toString())) {
         return res.status(401).json({
           success: false,
           message: 'Senha incorreta. Por favor, verifique a senha digitada e tente novamente.'
@@ -277,9 +452,11 @@ app.post('/api/accounts/login', (req, res) => {
       }
     }
 
+    const safeStudent = { ...matched.profile };
+
     return res.json({
       success: true,
-      student: matched.profile,
+      student: safeStudent,
       subjects: matched.subjects || [],
       securitySettings: matched.securitySettings,
       targetGrade: matched.targetGrade || matched.profile.targetGrade || 14,
@@ -296,7 +473,7 @@ app.post('/api/accounts/login', (req, res) => {
 });
 
 // Request Password Reset Code via Email
-app.post('/api/accounts/forgot-password', (req, res) => {
+app.post('/api/accounts/forgot-password', async (req, res) => {
   const identifier = req.body?.identifier;
 
   if (!identifier || typeof identifier !== 'string') {
@@ -317,25 +494,36 @@ app.post('/api/accounts/forgot-password', (req, res) => {
     );
   });
 
-  if (!matched || !matched.profile) {
+  let targetEmail = '';
+  let studentName = 'Estudante';
+  let studentId = '';
+
+  if (matched && matched.profile) {
+    const profile = matched.profile;
+    targetEmail = profile.email || `${profile.name.toLowerCase().replace(/\s+/g, '')}@calfex.ao`;
+    studentName = profile.name || 'Estudante';
+    studentId = profile.id;
+  } else if (term.includes('@') && term.includes('.')) {
+    // Direct email address provided
+    targetEmail = term;
+    studentName = term.split('@')[0];
+    studentId = `std_${Date.now()}`;
+  } else {
     return res.status(404).json({
       success: false,
-      message: 'Não encontramos nenhuma conta com essas informações cadastradas. Verifique se digitou corretamente.'
+      message: 'Não encontramos nenhuma conta com essas informações cadastradas. Digite o seu endereço de e-mail cadastrado.'
     });
   }
-
-  const profile = matched.profile;
-  const targetEmail = profile.email || `${profile.name.toLowerCase().replace(/\s+/g, '')}@calfex.ao`;
   
   // Generate a random 6-digit numeric verification code
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes validity
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes validity (requirement 5)
 
   passwordResetCodes[targetEmail.toLowerCase()] = {
     code,
-    studentId: profile.id,
+    studentId,
     expiresAt,
-    studentName: profile.name
+    studentName
   };
 
   // Mask email for privacy (e.g. m***l@gmail.com)
@@ -347,19 +535,92 @@ app.post('/api/accounts/forgot-password', (req, res) => {
     maskedEmail = `${namePart[0]}***${namePart[namePart.length - 1]}${domainPart}`;
   }
 
+  // Dispatch email with CalFéx official sender (calfex39@gmail.com)
+  const emailResult = await sendCalfexVerificationEmail(targetEmail, studentName, code);
+
+  // Log email dispatch to server console for auditing and monitoring
+  console.log(`[CALFÉX EMAIL SECURITY] Enviado código de verificação para o e-mail: ${targetEmail} a partir de ${CALFEX_SENDER_EMAIL} (Código: ${code}, Enviado: ${emailResult.sent})`);
+
   return res.json({
     success: true,
-    message: `Código de verificação enviado para ${maskedEmail}`,
+    message: emailResult.sent 
+      ? `Código de verificação enviado para ${maskedEmail} a partir de ${CALFEX_SENDER_EMAIL}`
+      : `Código gerado para ${maskedEmail}, mas o envio via Gmail SMTP requer configuração da variável GMAIL_APP_PASSWORD no servidor.`,
+    sender: CALFEX_SENDER_EMAIL,
     email: targetEmail,
     maskedEmail,
-    studentName: profile.name,
-    code, // Returned so frontend can simulate instant delivery in testing
-    expiresInSeconds: 900
+    studentName,
+    emailSent: emailResult.sent,
+    emailReason: emailResult.reason,
+    expiresInSeconds: 600
   });
 });
 
-// Verify Password Reset Code
-app.post('/api/accounts/verify-reset-code', (req, res) => {
+// Unified verification alias
+app.post('/api/auth/send-verification-code', async (req, res, next) => {
+  const { email, identifier, name } = req.body || {};
+  req.body.identifier = email || identifier || name;
+  // Forward to forgot-password handler
+  const term = (req.body.identifier || '').trim().toLowerCase();
+  if (!term) {
+    return res.status(400).json({ success: false, message: 'Endereço de e-mail é obrigatório para envio do código.' });
+  }
+  
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  const targetEmail = term;
+  const studentName = name || (term.includes('@') ? term.split('@')[0] : 'Estudante');
+
+  passwordResetCodes[targetEmail.toLowerCase()] = {
+    code,
+    studentId: `std_${Date.now()}`,
+    expiresAt,
+    studentName
+  };
+
+  const atIndex = targetEmail.indexOf('@');
+  let maskedEmail = targetEmail;
+  if (atIndex > 2) {
+    const namePart = targetEmail.substring(0, atIndex);
+    const domainPart = targetEmail.substring(atIndex);
+    maskedEmail = `${namePart[0]}***${namePart[namePart.length - 1]}${domainPart}`;
+  }
+
+  const emailResult = await sendCalfexVerificationEmail(targetEmail, studentName, code);
+  console.log(`[CALFÉX VERIFICAÇÃO] Código de 6 dígitos enviado para ${targetEmail}: ${code} (Status: ${emailResult.sent})`);
+
+  return res.json({
+    success: true,
+    message: emailResult.sent 
+      ? `Código de 6 dígitos enviado para ${maskedEmail}` 
+      : `Código gerado, envio via SMTP pendente de configuração da senha de app do Gmail.`,
+    sender: CALFEX_SENDER_EMAIL,
+    email: targetEmail,
+    maskedEmail,
+    emailSent: emailResult.sent,
+    emailReason: emailResult.reason,
+    expiresInSeconds: 600
+  });
+});
+
+// Direct test email endpoint for quick verification
+app.post('/api/send-test-email', async (req, res) => {
+  const toEmail = req.body?.email || 'melcanielulima111@gmail.com';
+  const name = req.body?.name || 'Estudante CalFéx';
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+  const result = await sendCalfexVerificationEmail(toEmail, name, code);
+  return res.json({
+    success: result.sent,
+    sender: CALFEX_SENDER_EMAIL,
+    to: toEmail,
+    code,
+    result
+  });
+});
+
+// Verify Password / Auth Reset Code
+app.post(['/api/accounts/verify-reset-code', '/api/auth/verify-code'], (req, res) => {
   const { email, code } = req.body;
 
   if (!email || !code) {
@@ -373,7 +634,7 @@ app.post('/api/accounts/verify-reset-code', (req, res) => {
 
   if (Date.now() > record.expiresAt) {
     delete passwordResetCodes[email.trim().toLowerCase()];
-    return res.status(400).json({ success: false, message: 'Este código expirou (validade de 15 minutos). Solicite um novo código.' });
+    return res.status(400).json({ success: false, message: 'Este código expirou (validade de 10 minutos). Solicite um novo código.' });
   }
 
   if (record.code !== code.toString().trim()) {
@@ -424,12 +685,13 @@ app.post('/api/accounts/reset-password', (req, res) => {
 
   // Update password in student profile and security settings
   const cleanPass = newPassword.toString().trim();
-  cloudDatabase[targetRecordKey].profile.password = cleanPass;
+  const hashedPass = hashPassword(cleanPass);
+  cloudDatabase[targetRecordKey].profile.password = hashedPass;
   
   if (!cloudDatabase[targetRecordKey].securitySettings) {
-    cloudDatabase[targetRecordKey].securitySettings = { mode: 'pin', pinCode: cleanPass };
+    cloudDatabase[targetRecordKey].securitySettings = { mode: 'pin', pinCode: hashedPass };
   } else {
-    cloudDatabase[targetRecordKey].securitySettings.pinCode = cleanPass;
+    cloudDatabase[targetRecordKey].securitySettings.pinCode = hashedPass;
   }
   
   cloudDatabase[targetRecordKey].updatedAt = new Date().toISOString();
@@ -438,10 +700,13 @@ app.post('/api/accounts/reset-password', (req, res) => {
   // Clean up used code
   delete passwordResetCodes[cleanEmail];
 
+  const safeReturnProfile = { ...cloudDatabase[targetRecordKey].profile };
+  delete safeReturnProfile.password;
+
   return res.json({
     success: true,
     message: 'Senha redefinida com sucesso!',
-    student: cloudDatabase[targetRecordKey].profile
+    student: safeReturnProfile
   });
 });
 
@@ -456,14 +721,23 @@ app.post('/api/accounts/register', (req, res) => {
   const studentId = profile.id;
   const now = new Date().toISOString();
 
+  const secureProfile = { ...profile };
+  if (secureProfile.password) {
+    secureProfile.password = hashPassword(secureProfile.password);
+  }
+
   // Ensure securitySettings has pin/password if profile has password
-  const finalSecSettings = securitySettings || {
+  const finalSecSettings = securitySettings ? { ...securitySettings } : {
     mode: profile.password ? 'pin' : 'none',
-    pinCode: profile.password || ''
+    pinCode: profile.password ? hashPassword(profile.password) : ''
   };
 
+  if (finalSecSettings.pinCode) {
+    finalSecSettings.pinCode = hashPassword(finalSecSettings.pinCode);
+  }
+
   cloudDatabase[studentId] = {
-    profile,
+    profile: secureProfile,
     subjects: Array.isArray(subjects) ? subjects : (cloudDatabase[studentId]?.subjects || []),
     securitySettings: finalSecSettings,
     targetGrade: targetGrade || profile.targetGrade || 14,
@@ -474,9 +748,12 @@ app.post('/api/accounts/register', (req, res) => {
 
   saveCloudDb(cloudDatabase);
 
+  const safeStudent = { ...profile };
+  delete safeStudent.password;
+
   res.json({
     success: true,
-    student: profile,
+    student: safeStudent,
     subjects: cloudDatabase[studentId].subjects,
     updatedAt: now
   });
@@ -558,33 +835,51 @@ app.delete('/api/accounts/:idOrEmail', (req, res) => {
 });
 
 // ==========================================
-// 4. AI ASSISTANT ROUTE (CLEAN TEXT)
+// 4. AI ASSISTANT ROUTE (TEXT & AUDIO SUPPORT)
 // ==========================================
-app.post('/api/gemini/assistant', async (req, res) => {
-  const prompt = req.body?.prompt;
+const handleAiAssistantRequest = async (req: express.Request, res: express.Response) => {
+  const prompt = req.body?.prompt || '';
+  const audioBase64 = req.body?.audioBase64;
+  const audioMimeType = req.body?.audioMimeType || 'audio/webm';
 
-  if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({ error: 'Prompt é obrigatório' });
+  if (!prompt && !audioBase64) {
+    return res.status(400).json({ error: 'Envie um texto ou áudio para a IA processar.' });
   }
+
+  const effectivePrompt = prompt.trim() || 'Por favor, ouça esta mensagem de áudio enviada pelo estudante no aplicativo CalFéx Pro e responda com clareza didática, objetividade e empatia.';
 
   const ai = getGeminiClient();
 
   if (!ai) {
-    const rawFallback = generateLocalFallbackResponse(prompt);
-    const cleanFallback = cleanAiResponse(rawFallback, prompt);
+    const rawFallback = generateLocalFallbackResponse(effectivePrompt);
+    const cleanFallback = cleanAiResponse(rawFallback, effectivePrompt);
     return res.json({ reply: cleanFallback, isLocal: true });
   }
 
   // Build chat context
-  let fullPrompt = prompt;
+  let fullPrompt = effectivePrompt;
   const conversationHistory = req.body?.conversationHistory;
   if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
     const historyText = conversationHistory
       .slice(-6)
       .map((m: { role: string; content: string }) => `${m.role === 'user' ? 'Aluno' : 'CalFéx IA'}: ${m.content}`)
       .join('\n');
-    fullPrompt = `Histórico da conversa:\n${historyText}\n\nAluno: ${prompt}\nCalFéx IA:`;
+    fullPrompt = `Histórico da conversa:\n${historyText}\n\nAluno: ${effectivePrompt}\nCalFéx IA:`;
   }
+
+  // Build multimodal content parts
+  const contentParts: any[] = [];
+  if (audioBase64 && typeof audioBase64 === 'string') {
+    // Strip data URI header if present
+    const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
+    contentParts.push({
+      inlineData: {
+        mimeType: audioMimeType,
+        data: cleanBase64,
+      }
+    });
+  }
+  contentParts.push({ text: fullPrompt });
 
   const candidateModels = [
     'gemini-3.7-flash',
@@ -600,7 +895,7 @@ app.post('/api/gemini/assistant', async (req, res) => {
     try {
       const response = await ai.models.generateContent({
         model: modelName,
-        contents: fullPrompt,
+        contents: contentParts.length === 1 ? fullPrompt : contentParts,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           temperature: 0.7,
@@ -613,21 +908,23 @@ app.post('/api/gemini/assistant', async (req, res) => {
       }
     } catch (err: any) {
       lastError = err;
-      // If 503 transient demand spike, do a short retry with next model
       console.warn(`Model ${modelName} encountered (${err?.status || err?.message || 'Error'}). Proceeding to next model...`);
     }
   }
 
   if (replyText) {
-    const sanitizedReply = cleanAiResponse(replyText, prompt);
+    const sanitizedReply = cleanAiResponse(replyText, effectivePrompt);
     return res.json({ reply: sanitizedReply, isLocal: false });
   }
 
-  console.warn('All Gemini models unavailable, serving smart local fallback. Last error:', lastError?.message || lastError);
-  const rawFallback = generateLocalFallbackResponse(prompt);
-  const sanitizedFallback = cleanAiResponse(rawFallback, prompt);
+  console.warn('All AI models unavailable, serving smart local fallback. Last error:', lastError?.message || lastError);
+  const rawFallback = generateLocalFallbackResponse(effectivePrompt);
+  const sanitizedFallback = cleanAiResponse(rawFallback, effectivePrompt);
   return res.json({ reply: sanitizedFallback, isLocal: true });
-});
+};
+
+app.post('/api/ai/assistant', handleAiAssistantRequest);
+app.post('/api/gemini/assistant', handleAiAssistantRequest);
 
 // Health check
 app.get('/api/health', (req, res) => {

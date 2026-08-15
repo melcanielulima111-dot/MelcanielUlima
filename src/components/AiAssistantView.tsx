@@ -13,6 +13,9 @@ import {
   VolumeX,
   Mic,
   MicOff,
+  Play,
+  Pause,
+  FileAudio,
   Compass,
   BookOpen,
   HelpCircle,
@@ -30,6 +33,108 @@ import {
 } from 'lucide-react';
 import { ChatMessage, ChatSession, SupportedLanguage } from '../types';
 import { getTranslation } from '../utils/i18n';
+
+// Audio Player Component for Chat Messages
+const AudioMessagePlayer: React.FC<{
+  audioUrl: string;
+  duration?: number;
+  fileName?: string;
+  isUser: boolean;
+}> = ({ audioUrl, duration = 0, fileName, isUser }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [totalDuration, setTotalDuration] = useState(duration);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch(err => console.warn('Audio play error', err));
+    }
+  };
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  return (
+    <div className={`p-2.5 rounded-xl border flex flex-col gap-1.5 ${
+      isUser 
+        ? 'bg-blue-700/60 border-blue-400/40 text-white' 
+        : 'bg-slate-950/70 border-slate-800 text-slate-200'
+    }`}>
+      <audio
+        ref={audioRef}
+        src={audioUrl}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => {
+          setIsPlaying(false);
+          setCurrentTime(0);
+        }}
+        onTimeUpdate={() => {
+          if (audioRef.current) {
+            setCurrentTime(audioRef.current.currentTime);
+          }
+        }}
+        onLoadedMetadata={() => {
+          if (audioRef.current && audioRef.current.duration && !isNaN(audioRef.current.duration)) {
+            setTotalDuration(audioRef.current.duration);
+          }
+        }}
+      />
+
+      <div className="flex items-center gap-3">
+        {/* Play/Pause Button */}
+        <button
+          type="button"
+          onClick={togglePlay}
+          className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-95 shadow-md ${
+            isUser
+              ? 'bg-white text-blue-700 hover:bg-blue-50'
+              : 'bg-blue-600 text-white hover:bg-blue-500'
+          }`}
+          title={isPlaying ? 'Pausar áudio' : 'Reproduzir áudio'}
+        >
+          {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current ml-0.5" />}
+        </button>
+
+        {/* Waveform & Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2 text-[10px] font-medium mb-1">
+            <span className="truncate flex items-center gap-1 font-semibold">
+              <FileAudio className="w-3 h-3 text-amber-300" />
+              {fileName || 'Mensagem de Áudio'}
+            </span>
+            <span className="font-mono tabular-nums opacity-90">
+              {formatTime(currentTime)} / {formatTime(totalDuration || duration || 0)}
+            </span>
+          </div>
+
+          {/* Animated sound equalizer bars */}
+          <div className="flex items-center gap-1 h-3">
+            {[40, 75, 55, 90, 65, 80, 45, 95, 60, 85, 50, 70].map((h, i) => (
+              <span
+                key={i}
+                className={`flex-1 rounded-full transition-all duration-150 ${
+                  isUser ? 'bg-white/80' : 'bg-blue-400'
+                }`}
+                style={{
+                  height: isPlaying ? `${Math.max(20, (h * ((i % 3) + 1)) % 100)}%` : `${Math.max(25, h * 0.35)}%`,
+                  opacity: (currentTime / (totalDuration || 1)) > (i / 12) ? 1 : 0.4
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface AiAssistantViewProps {
   lang: SupportedLanguage;
@@ -328,151 +433,298 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
     showToast('Mensagem removida.');
   };
 
+  // Helper to convert Blob / File to Base64
+  const fileToBase64 = (file: Blob | File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = (reader.result as string) || '';
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   // =========================================================================
-  // Robust Voice recognition & Audio Recording (Speech-to-Text)
+  // Robust Voice recognition & Audio Recording (Audio Sending & Speech-to-Text)
   // =========================================================================
   const handleToggleVoiceInput = async () => {
     setVoiceError(null);
 
-    // If currently listening, stop
+    // If currently listening, stop and send
     if (isListening) {
-      stopVoiceRecording();
+      handleSendRecordedAudio();
       return;
     }
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    // Check and request microphone permission explicitly
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setVoiceError('O seu navegador não suporta gravação de áudio.');
+        return;
       }
-    } catch (permErr: any) {
-      console.warn('Microphone permission error:', permErr);
-      setVoiceError('Permissão do microfone bloqueada. Por favor, autorize o microfone no seu navegador.');
-      return;
-    }
 
-    if (SpeechRecognition) {
-      try {
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'pt-PT';
-        recognition.interimResults = true;
-        recognition.continuous = true;
-        recognition.maxAlternatives = 1;
-
-        recognition.onstart = () => {
-          setIsListening(true);
-          setVoiceError(null);
-        };
-
-        recognition.onresult = (event: any) => {
-          let interim = '';
-          let final = '';
-
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-              final += transcript + ' ';
-            } else {
-              interim += transcript;
-            }
-          }
-
-          if (final) {
-            setInputPrompt(prev => {
-              const cleanPrev = prev.trim();
-              return cleanPrev ? `${cleanPrev} ${final.trim()}` : final.trim();
-            });
-          }
-          setVoiceInterim(interim);
-        };
-
-        recognition.onerror = (err: any) => {
-          console.warn('Speech recognition error:', err);
-          if (err.error === 'not-allowed') {
-            setVoiceError('Permissão de microfone negada no navegador.');
-          } else if (err.error === 'no-speech') {
-            // benign - user paused speaking
-          } else {
-            setVoiceError(`Erro de captação de voz (${err.error || 'tente novamente'}).`);
-          }
-          setIsListening(false);
-        };
-
-        recognition.onend = () => {
-          setIsListening(false);
-          setVoiceInterim('');
-        };
-
-        recognitionRef.current = recognition;
-        recognition.start();
-      } catch (err: any) {
-        console.warn('Failed to start Web Speech API, falling back to MediaRecorder', err);
-        startMediaRecorderFallback();
-      }
-    } else {
-      // Fallback with MediaRecorder
-      startMediaRecorderFallback();
-    }
-  };
-
-  const startMediaRecorderFallback = async () => {
-    try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
+      
+      let mimeType = 'audio/webm';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+          mimeType = 'audio/ogg;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4';
+        }
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+        if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
 
-      mediaRecorder.onstop = () => {
-        stream.getTracks().forEach(track => track.stop());
-        setIsListening(false);
-        if (!inputPrompt.trim()) {
-          setInputPrompt('Como posso recuperar as minhas notas e melhorar a Média Trimestral?');
-        }
-      };
-
-      mediaRecorder.start();
       mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start(200); // 200ms timeslices for smooth capture
       setIsListening(true);
-    } catch (e: any) {
-      setVoiceError('Não foi possível aceder ao microfone. Verifique as permissões.');
+      setRecordingSeconds(0);
+
+      // Start Speech Recognition if supported in browser for live transcription
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const recognition = new SpeechRecognition();
+          recognition.lang = 'pt-PT';
+          recognition.interimResults = true;
+          recognition.continuous = true;
+          recognition.maxAlternatives = 1;
+
+          recognition.onresult = (event: any) => {
+            let interim = '';
+            let final = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const transcript = event.results[i][0].transcript;
+              if (event.results[i].isFinal) {
+                final += transcript + ' ';
+              } else {
+                interim += transcript;
+              }
+            }
+
+            if (final) {
+              setInputPrompt(prev => {
+                const cleanPrev = prev.trim();
+                return cleanPrev ? `${cleanPrev} ${final.trim()}` : final.trim();
+              });
+            }
+            setVoiceInterim(interim);
+          };
+
+          recognition.onerror = (err: any) => {
+            console.warn('Speech recognition interim error (audio still recording):', err?.error);
+          };
+
+          recognition.onend = () => {
+            // Keep mediaRecorder running until user stops
+          };
+
+          recognitionRef.current = recognition;
+          recognition.start();
+        } catch (recErr) {
+          console.warn('Speech recognition start failed, recording raw audio directly', recErr);
+        }
+      }
+
+    } catch (permErr: any) {
+      console.warn('Microphone access error:', permErr);
+      setVoiceError('Permissão do microfone negada. Por favor, autorize o microfone para enviar áudio.');
+      setIsListening(false);
+    }
+  };
+
+  const handleCancelRecording = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) { /* ignore */ }
+    }
+    if (mediaRecorderRef.current) {
+      try {
+        if (mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+        mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+      } catch (e) { /* ignore */ }
+    }
+    audioChunksRef.current = [];
+    setIsListening(false);
+    setVoiceInterim('');
+    setRecordingSeconds(0);
+    showToast('Gravação de áudio cancelada.');
+  };
+
+  const handleSendRecordedAudio = async () => {
+    if (!mediaRecorderRef.current) {
+      setIsListening(false);
+      return;
+    }
+
+    const currentRecorder = mediaRecorderRef.current;
+    const duration = recordingSeconds || 1;
+
+    // Stop speech recognition
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) { /* ignore */ }
+    }
+
+    // Stop recorder and package blob
+    currentRecorder.onstop = async () => {
+      try {
+        currentRecorder.stream.getTracks().forEach(track => track.stop());
+        const mimeType = currentRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        audioChunksRef.current = [];
+
+        if (audioBlob.size < 50) {
+          showToast('Áudio muito curto ou vazio.');
+          setIsListening(false);
+          return;
+        }
+
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const base64Data = await fileToBase64(audioBlob);
+        const textCaption = (inputPrompt || voiceInterim || '').trim();
+
+        await handleSendAudioMessage({
+          audioBlob,
+          audioUrl,
+          base64Data,
+          mimeType,
+          duration,
+          caption: textCaption || '🎤 Pergunta em Áudio',
+          fileName: `Áudio_${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.webm`
+        });
+      } catch (err: any) {
+        console.error('Error packaging recorded audio:', err);
+        showToast('Erro ao processar o áudio gravado.');
+      } finally {
+        setIsListening(false);
+        setVoiceInterim('');
+        setRecordingSeconds(0);
+      }
+    };
+
+    if (currentRecorder.state === 'recording') {
+      currentRecorder.stop();
+    } else {
       setIsListening(false);
     }
   };
 
   const stopVoiceRecording = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        // ignore
-      }
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch (e) {
-        // ignore
-      }
-    }
-    setIsListening(false);
-    setVoiceInterim('');
+    handleSendRecordedAudio();
   };
 
   // Handle uploading/inserting an audio file directly
-  const handleAudioFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAudioFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const generatedPrompt = `[Áudio Inserido: "${file.name}"] - Explica-me os pontos chave ou como resolver o exercício abordado nesta gravação.`;
-    setInputPrompt(generatedPrompt);
-    event.target.value = '';
+    try {
+      const audioUrl = URL.createObjectURL(file);
+      const base64Data = await fileToBase64(file);
+      const mimeType = file.type || 'audio/mp3';
+
+      await handleSendAudioMessage({
+        audioBlob: file,
+        audioUrl,
+        base64Data,
+        mimeType,
+        duration: 0,
+        caption: inputPrompt.trim() || `[Ficheiro de Áudio: "${file.name}"]`,
+        fileName: file.name
+      });
+    } catch (err) {
+      console.error('Error uploading audio file:', err);
+      showToast('Erro ao carregar o ficheiro de áudio.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  // Helper to send audio message to server and receive AI response
+  const handleSendAudioMessage = async (audioData: {
+    audioBlob: Blob;
+    audioUrl: string;
+    base64Data: string;
+    mimeType: string;
+    duration: number;
+    caption: string;
+    fileName: string;
+  }) => {
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: audioData.caption,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isAudioMessage: true,
+      audioUrl: audioData.audioUrl,
+      audioDuration: audioData.duration,
+      audioFileName: audioData.fileName,
+    };
+
+    const nextMessages = [...messages, userMessage];
+    updateCurrentSessionMessages(nextMessages);
+    setInputPrompt('');
+    setVoiceInterim('');
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('/api/ai/assistant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: audioData.caption,
+          audioBase64: audioData.base64Data,
+          audioMimeType: audioData.mimeType,
+          conversationHistory: nextMessages.slice(-6).map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao contactar o servidor da IA');
+      }
+
+      const data = await response.json();
+      const assistantMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: data.reply || 'Desculpe, não consegui analisar o áudio.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+
+      updateCurrentSessionMessages([...nextMessages, assistantMessage]);
+    } catch (error) {
+      console.error('Error in AI audio response:', error);
+      const fallbackReply = generateFallback(audioData.caption);
+      const assistantMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: fallbackReply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      updateCurrentSessionMessages([...nextMessages, assistantMessage]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Text-to-Speech (Speak AI Response)
@@ -513,13 +765,13 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
     window.speechSynthesis.speak(utterance);
   };
 
-  // Send message handler
+  // Send standard text message handler
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputPrompt).trim();
     if (!text || isLoading) return;
 
     if (isListening) {
-      stopVoiceRecording();
+      handleCancelRecording();
     }
 
     const userMessage: ChatMessage = {
@@ -536,7 +788,7 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/gemini/assistant', {
+      const response = await fetch('/api/ai/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -580,14 +832,20 @@ export const AiAssistantView: React.FC<AiAssistantViewProps> = ({
   const generateFallback = (prompt: string): string => {
     const lower = prompt.toLowerCase();
     
+    // Paula Fernanda Ulima Rule: AI does not know who she is
+    if (lower.includes('paula fernanda') || lower.includes('quem e paula') || lower.includes('quem é paula') || lower.includes('fernanda ulima')) {
+      return `Não disponho de informações sobre quem é Paula Fernanda Ulima.`;
+    }
+
     // Creator Info
-    if (lower.includes('criador') || lower.includes('melcaniel') || lower.includes('ulima') || lower.includes('inocencio') || lower.includes('ana paula')) {
+    if (lower.includes('criador') || lower.includes('quem criou') || lower.includes('autor') || lower.includes('melcaniel') || lower.includes('ulima') || lower.includes('inocencio') || lower.includes('ana paula')) {
       return `🌟 **Criador do CalFéx Pro**
 - **Nome:** Melcaniel Ulima
-- **Filiação:** Filho de Inocêncio Ulima e Ana Paula Ulima
-- **Data de Nascimento:** 06/10/2010 (6 de Outubro de 2010)
+- **Filiação:** Inocêncio Ulima e Ana Paula Ulima
 - **Origem:** Angola
-- **Missão:** Transformar a educação e a gestão de notas com tecnologia e excelência.`;
+- **Missão:** Transformar a educação e a gestão de notas com tecnologia e excelência.
+
+Paula Fernanda Ulima`;
     }
 
     // Life Advice & Motivation
@@ -736,7 +994,7 @@ Podes perguntar sobre:
 
             <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              Gemini 2.5 • Ativo
+              CalFéx IA • Ativo
             </span>
           </div>
 
@@ -975,7 +1233,21 @@ Podes perguntar sobre:
                 }`}>
                   
                   {/* Content */}
-                  {isUser ? (
+                  {msg.isAudioMessage && msg.audioUrl ? (
+                    <div className="space-y-2">
+                      <AudioMessagePlayer
+                        audioUrl={msg.audioUrl}
+                        duration={msg.audioDuration}
+                        fileName={msg.audioFileName}
+                        isUser={isUser}
+                      />
+                      {msg.content && msg.content !== '🎤 Pergunta em Áudio' && !msg.content.startsWith('[Ficheiro de Áudio:') && (
+                        <p className="leading-relaxed whitespace-pre-wrap text-xs opacity-95 pt-1">
+                          {msg.content}
+                        </p>
+                      )}
+                    </div>
+                  ) : isUser ? (
                     <p className="leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                   ) : (
                     renderFormattedMessage(msg.content)
@@ -1126,23 +1398,23 @@ Podes perguntar sobre:
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={stopVoiceRecording}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+              onClick={handleCancelRecording}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-300 hover:text-rose-300 text-xs font-semibold border border-slate-700 hover:border-rose-500/30 transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Cancelar gravação sem enviar"
             >
-              <Square className="w-3.5 h-3.5 text-rose-400" />
-              <span>Parar Gravação</span>
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Cancelar</span>
             </button>
 
-            {inputPrompt.trim() && (
-              <button
-                type="button"
-                onClick={() => handleSendMessage()}
-                className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md shadow-blue-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Enviar Voz</span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleSendRecordedAudio}
+              className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md shadow-blue-600/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+              title="Terminar e enviar áudio para a IA"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Enviar Áudio</span>
+            </button>
           </div>
         </div>
       )}

@@ -139,6 +139,10 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   topic?: 'study' | 'app' | 'creator' | 'general' | 'life';
+  isAudioMessage?: boolean;
+  audioUrl?: string;
+  audioDuration?: number;
+  audioFileName?: string;
 }
 
 export interface ChatSession {
