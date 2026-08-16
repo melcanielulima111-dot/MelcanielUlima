@@ -12,6 +12,21 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// Middleware for parsing JSON and URL-encoded bodies with high limits for audio payloads
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// CORS middleware allowing cross-origin requests for external hosting environments (Netlify, VPS, etc.)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // Secure password hashing and verification
 function hashPassword(password: string): string {
   if (!password) return '';
@@ -111,21 +126,23 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
     </html>
   `;
 
-  // Try multiple configurations (Gmail service, Gmail 465 SSL, Gmail 587 STARTTLS)
+  // Try multiple configurations (Gmail service first for highest deliverability, then direct SSL 465, then STARTTLS 587)
   const configurations = [
+    {
+      service: 'gmail',
+      auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 6000,
+      greetingTimeout: 6000
+    },
     {
       host: 'smtp.gmail.com',
       port: 465,
       secure: true,
       auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000
-    },
-    {
-      service: 'gmail',
-      auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
-      tls: { rejectUnauthorized: false }
+      connectionTimeout: 6000,
+      greetingTimeout: 6000
     },
     {
       host: 'smtp.gmail.com',
@@ -134,8 +151,8 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
       requireTLS: true,
       auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000
+      connectionTimeout: 6000,
+      greetingTimeout: 6000
     }
   ];
 
@@ -191,23 +208,58 @@ interface CloudDatabase {
   [studentId: string]: CloudStudentRecord;
 }
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'calfex_cloud_db.json');
-
-// Ensure data directory exists
-try {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+function getDatabaseFilePath(): string {
+  if (process.env.DB_FILE_PATH) {
+    return process.env.DB_FILE_PATH;
   }
-} catch (e) {
-  console.warn('Could not create data dir:', e);
+  const defaultDir = path.join(process.cwd(), 'data');
+  try {
+    if (!fs.existsSync(defaultDir)) {
+      fs.mkdirSync(defaultDir, { recursive: true });
+    }
+    const testFile = path.join(defaultDir, '.write_test');
+    fs.writeFileSync(testFile, '1', 'utf-8');
+    fs.unlinkSync(testFile);
+    return path.join(defaultDir, 'calfex_cloud_db.json');
+  } catch (e) {
+    // If standard filesystem is read-only (e.g. serverless functions /tmp), fallback to /tmp
+    const tmpDir = path.join('/tmp', 'calfex_data');
+    try {
+      if (!fs.existsSync(tmpDir)) {
+        fs.mkdirSync(tmpDir, { recursive: true });
+      }
+      return path.join(tmpDir, 'calfex_cloud_db.json');
+    } catch {
+      return path.join(defaultDir, 'calfex_cloud_db.json');
+    }
+  }
 }
+
+// Ensure data directory exists and database file is initialized
+function ensureDataDirExists(): string {
+  const dbPath = getDatabaseFilePath();
+  try {
+    const dir = path.dirname(dbPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    if (!fs.existsSync(dbPath)) {
+      fs.writeFileSync(dbPath, JSON.stringify({}, null, 2), 'utf-8');
+    }
+  } catch (e) {
+    console.warn('Could not initialize data directory or db file:', e);
+  }
+  return dbPath;
+}
+
+ensureDataDirExists();
 
 function loadCloudDb(): CloudDatabase {
   try {
-    if (fs.existsSync(DB_FILE)) {
-      const data = fs.readFileSync(DB_FILE, 'utf-8');
-      return JSON.parse(data);
+    const dbPath = ensureDataDirExists();
+    if (fs.existsSync(dbPath)) {
+      const data = fs.readFileSync(dbPath, 'utf-8');
+      return JSON.parse(data || '{}');
     }
   } catch (err) {
     console.error('Error loading cloud database file:', err);
@@ -217,7 +269,8 @@ function loadCloudDb(): CloudDatabase {
 
 function saveCloudDb(db: CloudDatabase): void {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+    const dbPath = ensureDataDirExists();
+    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error writing to cloud database file:', err);
   }
@@ -233,18 +286,18 @@ const passwordResetCodes: { [email: string]: { code: string; studentId: string; 
 // 2. GEMINI AI CLIENT & SANITIZATION
 // ==========================================
 function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     return null;
   }
-  return new GoogleGenAI({ 
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build'
-      }
-    }
-  });
+  try {
+    return new GoogleGenAI({ 
+      apiKey
+    });
+  } catch (err) {
+    console.error('Error creating GoogleGenAI client:', err);
+    return null;
+  }
 }
 
 // System instructions for CalFéx IA with strict formatting rules and advanced life/student mentoring
@@ -951,4 +1004,11 @@ async function startServer() {
   });
 }
 
-startServer();
+// Start standalone server unless running in serverless cloud function (Netlify / Lambda)
+if (process.env.NETLIFY !== 'true' && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  startServer();
+}
+
+export default app;
+export { app };
+
