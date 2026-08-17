@@ -15,42 +15,42 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col transition-colors">
+      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col transition-colors">
         
         {/* Modal Header */}
-        <div className="p-5 sm:p-6 pb-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-900/90">
+        <div className="p-5 sm:p-6 pb-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/90">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-600/10 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30 flex items-center justify-center shadow-sm">
+            <div className="w-10 h-10 rounded-2xl bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center justify-center shadow-sm">
               <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white font-heading flex items-center gap-2">
+              <h2 className="text-lg font-bold text-white font-heading flex items-center gap-2">
                 <span>Termos de Uso & Políticas de Privacidade</span>
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className="text-xs text-slate-400">
                 Calféx • Compromisso com a Transparência e Segurança do Estudante
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-white rounded-full bg-slate-100 dark:bg-slate-800 transition-colors"
+            className="p-2 text-slate-400 hover:text-white rounded-full bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Content */}
-        <div className="p-5 sm:p-6 space-y-6 overflow-y-auto text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+        <div className="p-5 sm:p-6 space-y-6 overflow-y-auto text-xs sm:text-sm text-slate-300 leading-relaxed">
           
           {/* Highlight Badge */}
-          <div className="p-4 rounded-2xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 flex items-start gap-3">
-            <Lock className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+          <div className="p-4 rounded-2xl bg-blue-950/40 border border-blue-800/60 flex items-start gap-3">
+            <Lock className="w-5 h-5 text-blue-400 shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-bold text-slate-900 dark:text-white text-xs sm:text-sm mb-1">
+              <h4 className="font-bold text-white text-xs sm:text-sm mb-1">
                 Privacidade e Armazenamento Seguro
               </h4>
-              <p className="text-xs text-slate-600 dark:text-slate-400">
+              <p className="text-xs text-slate-400">
                 Todas as suas notas, fotografias, perfis e boletins são armazenados de forma segura na nuvem e no dispositivo. A Calféx não comercializa nem transfere seus dados escolares para terceiros.
               </p>
             </div>
@@ -58,11 +58,11 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
 
           {/* Section 1: Termos de Uso */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm font-heading">
-              <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <div className="flex items-center gap-2 text-white font-bold text-sm font-heading">
+              <FileText className="w-4 h-4 text-blue-400" />
               <span>1. Termos de Uso</span>
             </div>
-            <ul className="space-y-2 list-disc list-inside text-slate-600 dark:text-slate-400 text-xs pl-1">
+            <ul className="space-y-2 list-disc list-inside text-slate-400 text-xs pl-1">
               <li>
                 <strong>Finalidade Acadêmica:</strong> A aplicação Calféx foi concebida exclusivamente para auxiliar estudantes no acompanhamento, cálculo e previsão de médias escolares na escala de 0 a 20 valores do sistema de ensino de Angola.
               </li>
@@ -79,12 +79,12 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
           </div>
 
           {/* Section 2: Políticas de Privacidade */}
-          <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
-            <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm font-heading">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+          <div className="space-y-3 pt-2 border-t border-slate-800">
+            <div className="flex items-center gap-2 text-white font-bold text-sm font-heading">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
               <span>2. Política de Privacidade e Proteção de Dados</span>
             </div>
-            <ul className="space-y-2 list-disc list-inside text-slate-600 dark:text-slate-400 text-xs pl-1">
+            <ul className="space-y-2 list-disc list-inside text-slate-400 text-xs pl-1">
               <li>
                 <strong>Armazenamento Seguro:</strong> Não existem servidores externos recolhendo suas informações pessoais sem o seu consentimento. Seus dados residem com segurança no seu telemóvel ou computador.
               </li>
@@ -98,22 +98,22 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
           </div>
 
           {/* Section 3: Autoria e Direitos Autorais */}
-          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-xs">
+              <div className="flex items-center gap-2 text-white font-bold text-xs">
                 <Award className="w-4 h-4 text-amber-500" />
                 <span>3. Propriedade Intelectual & Desenvolvimento</span>
               </div>
-              <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
+              <span className="text-[10px] font-bold text-blue-400 bg-blue-950 px-2 py-0.5 rounded border border-blue-800">
                 Angola 🇦🇴
               </span>
             </div>
-            <p className="text-xs text-slate-800 dark:text-slate-200 font-semibold">
+            <p className="text-xs text-slate-200 font-semibold">
               Criado e concebido por Melcaniel Ulima
             </p>
-            <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5">
+            <div className="text-[11px] text-slate-400 space-y-0.5">
               <p>Filiação: Inocêncio Ulima e Ana Paula Ulima</p>
-              <p className="text-slate-600 dark:text-slate-300 font-medium">Paula Fernanda Ulima</p>
+              <p className="text-slate-300 font-medium">Paula Fernanda Ulima</p>
               <p>Todos os direitos reservados.</p>
             </div>
           </div>
@@ -121,8 +121,8 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-900/90">
-          <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+        <div className="p-4 border-t border-slate-800 flex items-center justify-between bg-slate-900/90">
+          <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
             <CheckCircle2 className="w-4 h-4" />
             <span>Termos e Políticas Vigentes</span>
           </div>
