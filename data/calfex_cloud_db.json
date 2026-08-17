@@ -1,0 +1,87 @@
+{
+  "test-123": {
+    "profile": {
+      "id": "test-123",
+      "email": "test@calfex.ao",
+      "name": "Estudante Teste",
+      "password": "207807251ad34533aedc49e76610983596be2b9222858e896fdc6928b8d39ee9"
+    },
+    "subjects": [],
+    "securitySettings": {
+      "mode": "pin",
+      "pinCode": "207807251ad34533aedc49e76610983596be2b9222858e896fdc6928b8d39ee9"
+    },
+    "targetGrade": 14,
+    "schedule": [],
+    "pautaLinks": [],
+    "updatedAt": "2026-08-17T11:10:38.299Z"
+  },
+  "std-angola-2026": {
+    "profile": {
+      "id": "std-angola-2026",
+      "name": "Manuel Silva",
+      "email": "manuel.silva@gmail.com",
+      "orderNumber": "15",
+      "className": "12ª B",
+      "course": "Ciências Físicas e Biológicas",
+      "schoolName": "Liceu de Luanda",
+      "academicYear": "2025/2026",
+      "gender": "M",
+      "password": "a04ed4666cf3b1f57100ddb3bef15ee0166de939ac960d9f841a0a5af7ed4c1a"
+    },
+    "subjects": [
+      {
+        "id": "sub-1",
+        "name": "Matemática",
+        "currentGrade": 15,
+        "evaluations": {
+          "mac": 14,
+          "npp": 16,
+          "npt": 15
+        }
+      },
+      {
+        "id": "sub-2",
+        "name": "Física",
+        "currentGrade": 14,
+        "evaluations": {
+          "mac": 13,
+          "npp": 15,
+          "npt": 14
+        }
+      }
+    ],
+    "securitySettings": {
+      "mode": "pin",
+      "pinCode": "a04ed4666cf3b1f57100ddb3bef15ee0166de939ac960d9f841a0a5af7ed4c1a"
+    },
+    "targetGrade": 16,
+    "schedule": [],
+    "pautaLinks": [],
+    "updatedAt": "2026-08-17T11:33:52.230Z"
+  },
+  "std-test-user-1786967171419": {
+    "profile": {
+      "id": "std-test-user-1786967171419",
+      "name": "Melcaniel Lima",
+      "email": "melcanielulima111@gmail.com",
+      "password": "6bac52f00e5fb049d4d73494b454b6b81fa13e52e9609cccdfb85c15b891c432",
+      "orderNumber": "12",
+      "gender": "masculino",
+      "classRoom": "11ª Classe - Turma A",
+      "course": "Ciências Físicas e Biológicas",
+      "schoolName": "Complexo Escolar CalFéx",
+      "academicYear": "2025 / 2026",
+      "targetGrade": 16
+    },
+    "subjects": [],
+    "securitySettings": {
+      "mode": "pin",
+      "pinCode": "6bac52f00e5fb049d4d73494b454b6b81fa13e52e9609cccdfb85c15b891c432"
+    },
+    "targetGrade": 16,
+    "schedule": [],
+    "pautaLinks": [],
+    "updatedAt": "2026-08-17T11:46:11.436Z"
+  }
+}

@@ -34,7 +34,7 @@ export function exportPautaToPdf(
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
-    doc.text('CalFéx Pro - SISTEMA DE GESTÃO ESCOLAR E PAUTA ACADÉMICA', pageWidth / 2, 8, { align: 'center' });
+    doc.text('Calféx - SISTEMA DE GESTÃO ESCOLAR E PAUTA ACADÉMICA', pageWidth / 2, 8, { align: 'center' });
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8.5);
@@ -252,7 +252,7 @@ export function exportPautaToPdf(
     doc.setFontSize(7);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Documento gerado automaticamente pelo CalFéx Pro em ${new Date().toLocaleString('pt-PT')} | Autenticidade Garantida`,
+      `Documento gerado automaticamente pelo Calféx em ${new Date().toLocaleString('pt-PT')} | Autenticidade Garantida`,
       pageWidth / 2,
       pageHeight - 4,
       { align: 'center' }

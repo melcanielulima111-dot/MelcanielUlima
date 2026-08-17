@@ -145,7 +145,7 @@ export const AppLockScreen: React.FC<AppLockScreenProps> = ({
         setTargetEmail(dest);
         setMaskedEmail(res.maskedEmail || dest);
         setViewMode('forgot-verify');
-        setResendCooldown(65);
+        setResendCooldown(75);
         setForgotLoading(false);
 
         if (res.emailSent) {
@@ -172,7 +172,7 @@ export const AppLockScreen: React.FC<AppLockScreenProps> = ({
     setTargetEmail(cleanMail);
     setMaskedEmail(masked);
     setViewMode('forgot-verify');
-    setResendCooldown(65);
+    setResendCooldown(75);
     setForgotLoading(false);
   };
 
@@ -632,7 +632,7 @@ export const AppLockScreen: React.FC<AppLockScreenProps> = ({
               className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white font-bold text-xs shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 cursor-pointer transition-all"
             >
               <Unlock className="w-4 h-4" />
-              <span>Aceder ao CalFéx Pro Agora</span>
+              <span>Aceder ao Calféx Agora</span>
             </button>
           </div>
         )}

@@ -2,15 +2,153 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+// ==========================================
+// SUPABASE CLOUD DATABASE CLIENT & HELPERS
+// ==========================================
+let supabaseClient: SupabaseClient | null = null;
+let supabaseChecked = false;
+
+function getSupabase(): SupabaseClient | null {
+  if (supabaseClient) return supabaseClient;
+  const url = (
+    process.env.SUPABASE_URL || 
+    process.env.VITE_SUPABASE_URL || 
+    process.env.NEXT_PUBLIC_SUPABASE_URL || 
+    process.env.REACT_APP_SUPABASE_URL || 
+    ''
+  ).trim();
+  
+  const key = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY || 
+    process.env.SUPABASE_ANON_KEY || 
+    process.env.SUPABASE_KEY || 
+    process.env.VITE_SUPABASE_ANON_KEY || 
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
+    process.env.REACT_APP_SUPABASE_ANON_KEY || 
+    ''
+  ).trim();
+
+  if (url && key) {
+    try {
+      supabaseClient = createClient(url, key, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        }
+      });
+      if (!supabaseChecked) {
+        supabaseChecked = true;
+        console.log(`[CALFÉX SUPABASE] ✅ Conectado ao banco de dados Supabase na nuvem: ${url}`);
+        // Auto migrate local records to Supabase if any
+        setTimeout(() => {
+          migrateLocalDataToSupabase();
+        }, 1000);
+      }
+      return supabaseClient;
+    } catch (err) {
+      console.error('[CALFÉX SUPABASE] Erro ao instanciar cliente Supabase:', err);
+    }
+  }
+  return null;
+}
+
+// Adaptive upsert to Supabase supporting multiple table schemas and columns
+async function upsertStudentToSupabase(sb: SupabaseClient, row: any): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Try full schema on calfex_students
+    const { error: err1 } = await sb.from('calfex_students').upsert(row, { onConflict: 'id' });
+    if (!err1) return { success: true };
+
+    console.warn('[CALFÉX SUPABASE UPSERT (FULL SCHEMA) FAILED, TENTANDO ADAPTATIVO]:', err1.message);
+
+    // 2. Try adaptive core columns
+    const adaptiveRow: any = {
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      profile: row.profile,
+      subjects: row.subjects || [],
+      updated_at: row.updated_at
+    };
+    if (row.password_hash) adaptiveRow.password_hash = row.password_hash;
+    if (row.order_number) adaptiveRow.order_number = row.order_number;
+    if (row.class_room) adaptiveRow.class_room = row.class_room;
+    if (row.target_grade) adaptiveRow.target_grade = row.target_grade;
+
+    const { error: err2 } = await sb.from('calfex_students').upsert(adaptiveRow, { onConflict: 'id' });
+    if (!err2) return { success: true };
+
+    // 3. Try minimal document payload
+    const minimalRow = {
+      id: row.id,
+      email: row.email,
+      profile: row.profile,
+      updated_at: row.updated_at
+    };
+    const { error: err3 } = await sb.from('calfex_students').upsert(minimalRow, { onConflict: 'id' });
+    if (!err3) return { success: true };
+
+    // 4. Try fallback table name 'students'
+    const { error: err4 } = await sb.from('students').upsert(row, { onConflict: 'id' });
+    if (!err4) return { success: true };
+
+    return { success: false, error: err1.message };
+  } catch (e: any) {
+    return { success: false, error: e?.message || String(e) };
+  }
+}
+
+// Fetch all students from Supabase (supports calfex_students and fallback students)
+async function fetchAllStudentsFromSupabase(sb: SupabaseClient): Promise<any[]> {
+  try {
+    const { data, error } = await sb.from('calfex_students').select('*');
+    if (!error && Array.isArray(data)) return data;
+
+    const { data: data2, error: err2 } = await sb.from('students').select('*');
+    if (!err2 && Array.isArray(data2)) return data2;
+  } catch (err) {
+    console.warn('[CALFÉX SUPABASE FETCH ALL ERROR]:', err);
+  }
+  return [];
+}
+
+// Fetch single student by id or email
+async function fetchStudentByIdOrEmailFromSupabase(sb: SupabaseClient, idOrEmail: string): Promise<any | null> {
+  const term = idOrEmail.trim().toLowerCase();
+  try {
+    const { data, error } = await sb
+      .from('calfex_students')
+      .select('*')
+      .or(`id.eq.${idOrEmail},email.eq.${term}`)
+      .limit(1);
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      return data[0];
+    }
+
+    const { data: d2, error: e2 } = await sb
+      .from('students')
+      .select('*')
+      .or(`id.eq.${idOrEmail},email.eq.${term}`)
+      .limit(1);
+
+    if (!e2 && Array.isArray(d2) && d2.length > 0) {
+      return d2[0];
+    }
+  } catch (err) {
+    console.warn('[CALFÉX SUPABASE FETCH SINGLE ERROR]:', err);
+  }
+  return null;
+}
 
 // Middleware for parsing JSON and URL-encoded bodies with high limits for audio payloads
 app.use(express.json({ limit: '50mb' }));
@@ -27,20 +165,67 @@ app.use((req, res, next) => {
   next();
 });
 
+// URL Normalizer for Netlify Serverless Functions and standalone servers
+app.use((req, res, next) => {
+  // Strip Netlify Functions function prefix if present
+  if (req.url.startsWith('/.netlify/functions/api')) {
+    req.url = req.url.replace(/^\/\.netlify\/functions\/api/, '') || '/';
+  }
+  // Ensure the /api prefix is present for all backend routes
+  if (!req.url.startsWith('/api') && (
+    req.url.startsWith('/accounts') ||
+    req.url.startsWith('/students') ||
+    req.url.startsWith('/auth') ||
+    req.url.startsWith('/ai') ||
+    req.url.startsWith('/gemini') ||
+    req.url.startsWith('/send-test-email') ||
+    req.url.startsWith('/health')
+  )) {
+    req.url = `/api${req.url}`;
+  }
+  next();
+});
+
 // Secure password hashing and verification
 function hashPassword(password: string): string {
   if (!password) return '';
-  return crypto.createHash('sha256').update(password.toString().trim() + '_calfex_salt_v2').digest('hex');
+  const clean = password.toString().trim();
+  // Prevent double-hashing if it's already a 64-character SHA256 hex string
+  if (/^[a-f0-9]{64}$/i.test(clean)) {
+    return clean;
+  }
+  return crypto.createHash('sha256').update(clean + '_calfex_salt_v2').digest('hex');
 }
 
 function verifyPassword(inputPassword: string, storedPasswordOrHash: string): boolean {
   if (!inputPassword || !storedPasswordOrHash) return false;
   const inputClean = inputPassword.toString().trim();
   const storedClean = storedPasswordOrHash.toString().trim();
-  return (
-    storedClean === inputClean ||
-    storedClean === hashPassword(inputClean)
-  );
+
+  // 1. Plain-text exact match
+  if (storedClean === inputClean) return true;
+
+  // 2. Salted v2 SHA256 match
+  const hashV2 = hashPassword(inputClean);
+  if (storedClean === hashV2) return true;
+
+  // 2b. Double salted v2 match (handles legacy double hashing)
+  if (storedClean === hashPassword(hashV2)) return true;
+
+  // 3. Legacy salt v1 SHA256 match
+  const legacySalt1 = crypto.createHash('sha256').update(inputClean + '_calfex_salt').digest('hex');
+  if (storedClean === legacySalt1) return true;
+  if (storedClean === hashPassword(legacySalt1)) return true;
+
+  // 4. Raw SHA256 match
+  const rawSha = crypto.createHash('sha256').update(inputClean).digest('hex');
+  if (storedClean === rawSha) return true;
+  if (storedClean === hashPassword(rawSha)) return true;
+
+  // 5. Case-insensitive plain text match
+  if (storedClean.toLowerCase() === inputClean.toLowerCase()) return true;
+
+  return false;
 }
 
 // Official CalFéx Sender Email
@@ -60,7 +245,7 @@ function getCleanEmailPassword(): string | null {
   return clean || null;
 }
 
-// Send real verification email with custom CalFéx Pro branding and connection fallbacks
+// Send real verification email with custom Calféx branding and connection fallbacks
 async function sendCalfexVerificationEmail(toEmail: string, studentName: string, code: string): Promise<{ sent: boolean; reason?: string }> {
   const cleanPass = getCleanEmailPassword();
 
@@ -75,7 +260,7 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Código de Verificação CalFéx</title>
+      <title>Código de Verificação Calféx</title>
       <style>
         body { margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f8fafc; }
         .container { max-width: 540px; margin: 30px auto; background: #1e293b; border-radius: 20px; overflow: hidden; border: 1px solid #334155; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
@@ -95,13 +280,13 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
     <body>
       <div class="container">
         <div class="header">
-          <h1 class="logo-title">CalFéx Pro</h1>
+          <h1 class="logo-title">Calféx</h1>
           <div class="logo-sub">SISTEMA DE GESTÃO ACADÊMICA & SEGURANÇA</div>
         </div>
         <div class="content">
           <h2 class="greeting">Olá, ${studentName}!</h2>
           <p class="text">
-            Este é o seu código de verificação de segurança no aplicativo <strong>CalFéx Pro</strong>:
+            Este é o seu código de verificação de segurança no aplicativo <strong>Calféx</strong>:
           </p>
           
           <div class="code-box">
@@ -118,7 +303,7 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
           </p>
         </div>
         <div class="footer">
-          &copy; ${new Date().getFullYear()} CalFéx Pro. Todos os direitos reservados.<br>
+          &copy; ${new Date().getFullYear()} Calféx. Todos os direitos reservados.<br>
           Remetente oficial: ${CALFEX_SENDER_EMAIL}
         </div>
       </div>
@@ -132,8 +317,8 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
       service: 'gmail',
       auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 6000,
-      greetingTimeout: 6000
+      connectionTimeout: 3500,
+      greetingTimeout: 3500
     },
     {
       host: 'smtp.gmail.com',
@@ -141,8 +326,8 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
       secure: true,
       auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 6000,
-      greetingTimeout: 6000
+      connectionTimeout: 3500,
+      greetingTimeout: 3500
     },
     {
       host: 'smtp.gmail.com',
@@ -151,8 +336,8 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
       requireTLS: true,
       auth: { user: CALFEX_SENDER_EMAIL, pass: cleanPass },
       tls: { rejectUnauthorized: false },
-      connectionTimeout: 6000,
-      greetingTimeout: 6000
+      connectionTimeout: 3500,
+      greetingTimeout: 3500
     }
   ];
 
@@ -162,10 +347,10 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
     try {
       const transporter = nodemailer.createTransport(config as any);
       const info = await transporter.sendMail({
-        from: `"CalFéx Pro" <${CALFEX_SENDER_EMAIL}>`,
+        from: `"Calféx" <${CALFEX_SENDER_EMAIL}>`,
         to: toEmail,
-        subject: `Este é o seu código de verificação: ${code} - CalFéx Pro`,
-        text: `Olá ${studentName},\n\nEste é o seu código de verificação: ${code}\n\nUtilize este código para confirmar a sua identidade no aplicativo CalFéx Pro.\nValidade: 10 minutos.\n\nRemetente: ${CALFEX_SENDER_EMAIL}`,
+        subject: `Este é o seu código de verificação: ${code} - Calféx`,
+        text: `Olá ${studentName},\n\nEste é o seu código de verificação: ${code}\n\nUtilize este código para confirmar a sua identidade no aplicativo Calféx.\nValidade: 10 minutos.\n\nRemetente: ${CALFEX_SENDER_EMAIL}`,
         html: htmlContent
       });
       console.log(`[CALFÉX EMAIL DISPATCHED] ✅ E-mail enviado com sucesso de ${CALFEX_SENDER_EMAIL} para ${toEmail}. Message ID: ${info.messageId}`);
@@ -192,7 +377,7 @@ async function sendCalfexVerificationEmail(toEmail: string, studentName: string,
 app.use(express.json({ limit: '15mb' }));
 
 // ==========================================
-// 1. CLOUD STORAGE DATABASE (Multi-device Sync)
+// 1. CLOUD STORAGE DATABASE (Supabase & Multi-device Sync)
 // ==========================================
 interface CloudStudentRecord {
   profile: any;
@@ -279,187 +464,245 @@ function saveCloudDb(db: CloudDatabase): void {
 // In-memory active database
 let cloudDatabase: CloudDatabase = loadCloudDb();
 
-// In-memory store for password reset verification codes: { [email: string]: { code: string; studentId: string; expiresAt: number } }
+// In-memory store for password reset verification codes
 const passwordResetCodes: { [email: string]: { code: string; studentId: string; expiresAt: number; studentName: string } } = {};
 
-// ==========================================
-// 2. GEMINI AI CLIENT & SANITIZATION
-// ==========================================
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim();
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return null;
-  }
+// Auto-migration from local storage to Supabase cloud database
+async function migrateLocalDataToSupabase() {
+  const sb = getSupabase();
+  if (!sb) return;
   try {
-    return new GoogleGenAI({ 
-      apiKey
-    });
+    const localKeys = Object.keys(cloudDatabase);
+    if (localKeys.length === 0) return;
+
+    for (const key of localKeys) {
+      const rec = cloudDatabase[key];
+      if (!rec || !rec.profile) continue;
+
+      const profile = rec.profile;
+      const studentId = rec.profile.id || key;
+      const email = rec.profile.email || `${studentId}@calfex.ao`;
+      const name = rec.profile.name || 'Estudante';
+      const orderNumber = rec.profile.orderNumber ? String(rec.profile.orderNumber) : null;
+      const className = rec.profile.className || rec.profile.classRoom || null;
+      const course = rec.profile.course || null;
+      const schoolName = rec.profile.schoolName || null;
+      const academicYear = rec.profile.academicYear || null;
+      const gender = rec.profile.gender || null;
+      const passwordHash = rec.profile.password ? hashPassword(rec.profile.password) : (rec.securitySettings?.pinCode ? hashPassword(rec.securitySettings.pinCode) : null);
+
+      const row = {
+        id: studentId,
+        email: email.toLowerCase(),
+        name: name,
+        order_number: orderNumber,
+        class_room: className,
+        course: course,
+        school_name: schoolName,
+        academic_year: academicYear,
+        gender: gender,
+        password_hash: passwordHash,
+        profile: profile,
+        subjects: Array.isArray(rec.subjects) ? rec.subjects : [],
+        security_settings: rec.securitySettings || {},
+        target_grade: rec.targetGrade || profile.targetGrade || 14,
+        schedule: Array.isArray(rec.schedule) ? rec.schedule : [],
+        pauta_links: Array.isArray(rec.pautaLinks) ? rec.pautaLinks : [],
+        updated_at: rec.updatedAt || new Date().toISOString()
+      };
+
+      const result = await upsertStudentToSupabase(sb, row);
+      if (result.success) {
+        console.log(`[CALFÉX SUPABASE MIGRATION] ✅ Conta ${name} (${email}) sincronizada com o Supabase!`);
+      }
+    }
   } catch (err) {
-    console.error('Error creating GoogleGenAI client:', err);
-    return null;
+    console.warn('[CALFÉX SUPABASE MIGRATION] Falha na auto-migração para Supabase:', err);
   }
-}
-
-// System instructions for CalFéx IA with strict formatting rules and advanced life/student mentoring
-const SYSTEM_INSTRUCTION = `Você é o "CalFéx IA", o mentor escolar e conselheiro pessoal de alta inteligência do aplicativo CalFéx Pro.
-
-SEU PAPEL E CAPACIDADES:
-1. MENTORIA ESTUDANTIL E ACADÊMICA:
-   - Explicar qualquer matéria (Matemática, Física, Química, Português, Biologia, História, Geografia, Filosofia, Inglês, etc.) com clareza cristalina, didática e passo a passo.
-   - Fornecer técnicas de estudo eficazes (Método Pomodoro, Revisão Espaçada, Mapas Mentais, Técnica Feynman, Resoluções de Exercícios).
-   - Aconselhar sobre como recuperar notas baixas, preparar-se para provas trimestrais e exames, e gerir a rotina de trabalhos escolares (MAC, P1, P2).
-
-2. CONSELHOS DE VIDA E DESENVOLVIMENTO PESSOAL:
-   - Oferecer orientação empática, motivacional e prática para desafios da vida juvenil e estudantil: superação de ansiedade de testes, disciplina diária, resiliência diante de notas difíceis, conciliação de estudos com vida pessoal, foco contra distrações do celular, e construção de hábitos vencedores.
-   - Inspirar o aluno a ter visão de futuro, integridade, espírito de liderança e busca pela excelência acadêmica e pessoal.
-
-DIRETRIZES DE FORMATAÇÃO E RESPOSTA (REGRA CRÍTICA E OBRIGATÓRIA):
-1. REGRA ABSOLUTA: NUNCA utilize símbolos de cerquilha (#, ##, ###) nem símbolos de dólar ($ ou $$) no meio das suas respostas, A MENOS que o usuário solicite explicitamente código com hashtags, formatação de títulos Markdown com # ou fórmulas em LaTeX com $.
-   - Em vez de usar títulos com cerquilhas (como "### Título" ou "# Título"), use negrito limpo (**Título**) ou texto direto.
-   - Em vez de usar LaTeX delimitado por cifrões/dólares (como "$$MT = ...$$" ou "$P1$"), escreva fórmulas em texto simples e limpo como: MT = (P1 + P2 + MAC) / 3 ou MFD = (MT1 + MT2 + MT3) / 3.
-   - Não use cifrões $ como marcadores ou delimitadores de fórmulas matemáticas.
-   - Mantenha o texto limpo, fluido, legível, acolhedor e elegante.
-
-2. OBJETIVIDADE E PRATICIDADE:
-   - Dê respostas estruturadas com pontos ou tópicos claros, sem rodeios desnecessários.
-   - Ao dar conselhos de vida ou estudo, forneça passos acionáveis imediatos que o aluno pode aplicar hoje.
-
-3. CÁLCULOS OFICIAIS DO CALFÉX PRO:
-   - MT (Média Trimestral): MT = (P1 + P2 + MAC) / 3
-   - MFD (Média Final da Disciplina): MFD = (MT1 + MT2 + MT3) / 3
-   - Escala Oficial Angolana (0 a 20):
-     * >= 14: Excelente / Dispensa / Aprovado com Mérito
-     * 10 a 13.9: Aprovado (Transita)
-     * 7 a 9.9: Em Risco / Exame de Recurso
-     * < 7: Reprovado / Não Transita
-
-4. SOBRE O CRIADOR:
-   - Criador: Melcaniel Ulima
-   - Filiação: Inocêncio Ulima e Ana Paula Ulima
-   - País: Angola
-   - REGRA MANDATÓRIA SOBRE O CRIADOR: Sempre que alguém perguntar sobre o criador, quem criou o aplicativo, sua autoria, filiação ou história, você deve responder com as informações do criador e, OBRIGATORIAMENTE no final de tudo da resposta, incluir exatamente:
-Paula Fernanda Ulima
-   - REGRA MANDATÓRIA SOBRE "PAULA FERNANDA ULIMA": Se algum usuário perguntar diretamente ou indiretamente quem é "Paula Fernanda Ulima", quem é "Paula Fernanda" ou qual o seu papel, você DEVE responder com naturalidade e brevidade que NÃO sabe quem ela é e não possui informações sobre essa pessoa (por exemplo: "Não disponho de informações sobre quem é Paula Fernanda Ulima.").`;
-
-// Response cleaner ensuring no unrequested $ or # appear in the reply
-function cleanAiResponse(text: string, userPrompt: string): string {
-  const lowerPrompt = (userPrompt || '').toLowerCase();
-  if (
-    lowerPrompt.includes('latex') ||
-    lowerPrompt.includes('dólar') ||
-    lowerPrompt.includes('dolar') ||
-    lowerPrompt.includes('hashtag') ||
-    lowerPrompt.includes('#') ||
-    lowerPrompt.includes('$') ||
-    lowerPrompt.includes('código') ||
-    lowerPrompt.includes('codigo')
-  ) {
-    return text;
-  }
-
-  let cleaned = text;
-
-  // 1. Convert common LaTeX fractions and mathematical symbols to plain text
-  cleaned = cleaned.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1 / $2)');
-  cleaned = cleaned.replace(/\\ge/g, '>=');
-  cleaned = cleaned.replace(/\\le/g, '<=');
-  cleaned = cleaned.replace(/\\times/g, '*');
-  cleaned = cleaned.replace(/\\cdot/g, '·');
-  cleaned = cleaned.replace(/\\pm/g, '±');
-  cleaned = cleaned.replace(/\\approx/g, '≈');
-  cleaned = cleaned.replace(/\\neq/g, '≠');
-
-  // 2. Remove $$ ... $$ and $ ... $ delimiters and standalone dollars
-  cleaned = cleaned.replace(/\$\$([^$]+)\$\$/g, '$1');
-  cleaned = cleaned.replace(/\$([^$]+)\$/g, '$1');
-  cleaned = cleaned.replace(/\$/g, '');
-
-  // 3. Replace markdown headers like "### Title" with "**Title**"
-  cleaned = cleaned.replace(/^(#{1,6})\s*(.+)$/gm, '**$2**');
-  cleaned = cleaned.replace(/#/g, '');
-
-  return cleaned.trim();
-}
-
-// Fallback intelligent responder without $ or #
-function generateLocalFallbackResponse(prompt: string): string {
-  const lower = (prompt || '').toLowerCase();
-  
-  if (lower.includes('paula fernanda') || lower.includes('quem e paula') || lower.includes('quem é paula') || lower.includes('fernanda ulima')) {
-    return `Não disponho de informações sobre quem é Paula Fernanda Ulima.`;
-  }
-
-  if (lower.includes('criador') || lower.includes('quem criou') || lower.includes('autor') || lower.includes('melcaniel') || lower.includes('ulima') || lower.includes('inocencio') || lower.includes('ana paula')) {
-    return `🌟 **Criador do CalFéx Pro**
-- **Nome:** Melcaniel Ulima
-- **Filiação:** Inocêncio Ulima e Ana Paula Ulima
-- **Origem:** Angola
-
-Paula Fernanda Ulima`;
-  }
-
-  if (lower.includes('como funciona') || lower.includes('formula') || lower.includes('fórmula') || lower.includes('média') || lower.includes('pauta') || lower.includes('mac') || lower.includes('mfd') || lower.includes('t1') || lower.includes('t2') || lower.includes('t3')) {
-    return `📊 **Fórmulas Oficiais de Média (Escala 0-20)**
-- **Média Trimestral (MT):**
-  MT = (P1 + P2 + MAC) / 3
-- **Média Final da Disciplina (MFD):**
-  MFD = (MT1 + MT2 + MT3) / 3
-- **Critérios Oficiais:**
-  * 14.0 a 20.0: Dispensa / Aprovado com Mérito
-  * 10.0 a 13.9: Aprovado
-  * 7.0 a 9.9: Exame / Recurso
-  * Abaixo de 7.0: Não Aprovado`;
-  }
-
-  if (lower.includes('matematica') || lower.includes('matemática') || lower.includes('equação') || lower.includes('pitagoras') || lower.includes('pitágoras') || lower.includes('bhaskara')) {
-    return `📐 **Dica de Matemática**
-- **Teorema de Pitágoras:** a^2 + b^2 = c^2 (a soma dos quadrados dos catetos é igual ao quadrado da hipotenusa).
-- **Fórmula de Bháskara:** x = (-b ± √(b^2 - 4ac)) / (2a)
-- **Dica de Prova:** Sempre confira os sinais e substitua o valor encontrado na equação original para validar.`;
-  }
-
-  if (lower.includes('fisica') || lower.includes('física') || lower.includes('velocidade') || lower.includes('newton')) {
-    return `⚡ **Dica de Física**
-- **Velocidade Média:** Vm = ΔS / Δt (Distância percorrida dividida pelo tempo).
-- **2ª Lei de Newton:** F = m * a (Força é igual à massa multiplicada pela aceleração).
-- **Dica de Resolução:** Converta sempre as unidades para o Sistema Internacional (metros, segundos, kg) antes de calcular.`;
-  }
-
-  if (lower.includes('quimica') || lower.includes('química') || lower.includes('tabela periodica') || lower.includes('tabela periódica')) {
-    return `🧪 **Dica de Química**
-- **Estrutura Atômica:** Prótons e nêutrons no núcleo; elétrons na eletrosfera.
-- **Número Atômico (Z):** Representa a quantidade de prótons no núcleo de um átomo.
-- **Gases Nobres:** Elementos da família 18 que possuem a camada de valência completa e alta estabilidade.`;
-  }
-
-  if (lower.includes('portugues') || lower.includes('português') || lower.includes('redação') || lower.includes('redacao') || lower.includes('sintaxe')) {
-    return `✍️ **Dica de Língua Portuguesa & Redação**
-1. **Estrutura da Redação:** Introdução (apresentação do tema), Desenvolvimento (2 argumentos sólidos) e Conclusão (proposta de reflexão/solução).
-2. **Concordância:** Sujeito e verbo devem concordar em número e pessoa.
-3. **Coesão:** Use conectivos adequados (além disso, portanto, contudo, por conseguinte).`;
-  }
-
-  if (lower.includes('estudar') || lower.includes('dica') || lower.includes('resumo') || lower.includes('nota 20') || lower.includes('meta')) {
-    return `🎓 **Estratégia de Alta Performance Escolar**
-1. **Foco na MAC:** Faça todas as tarefas de casa e fichas de avaliação contínua.
-2. **Método Pomodoro:** 25 minutos de estudo focado e 5 minutos de pausa.
-3. **Simulador de Notas:** Use a calculadora "Nota que Falta" para saber exatamente quanto precisa tirar na P2.`;
-  }
-
-  return `Olá! Sou o Tutor IA do CalFéx. Posso te ajudar com dúvidas de disciplinas, matérias escolares ou cálculo de médias. Como posso te apoiar nos seus estudos hoje?`;
 }
 
 // ==========================================
-// 3. CLOUD ACCOUNT & MULTI-DEVICE ENDPOINTS
+// 2. CLOUD ACCOUNT & MULTI-DEVICE ENDPOINTS (SUPABASE INTEGRATED)
 // ==========================================
+
+// Diagnostic endpoint to check Supabase connection & table health
+app.get('/api/supabase/status', async (req, res) => {
+  const url = (
+    process.env.SUPABASE_URL || 
+    process.env.VITE_SUPABASE_URL || 
+    process.env.NEXT_PUBLIC_SUPABASE_URL || 
+    process.env.REACT_APP_SUPABASE_URL || 
+    ''
+  ).trim();
+
+  const key = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY || 
+    process.env.SUPABASE_ANON_KEY || 
+    process.env.SUPABASE_KEY || 
+    process.env.VITE_SUPABASE_ANON_KEY || 
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
+    process.env.REACT_APP_SUPABASE_ANON_KEY || 
+    ''
+  ).trim();
+
+  const sqlSetupScript = `
+-- CRIE A TABELA DE CONTAS CALFÉX NO SUPABASE (SQL EDITOR)
+CREATE TABLE IF NOT EXISTS public.calfex_students (
+  id TEXT PRIMARY KEY,
+  email TEXT,
+  name TEXT,
+  order_number TEXT,
+  class_room TEXT,
+  course TEXT,
+  school_name TEXT,
+  academic_year TEXT,
+  gender TEXT,
+  password_hash TEXT,
+  profile JSONB,
+  subjects JSONB,
+  security_settings JSONB,
+  target_grade NUMERIC,
+  schedule JSONB,
+  pauta_links JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- HABILITAR PERMISSÕES DE LEITURA E ESCRITA
+ALTER TABLE public.calfex_students ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all access to calfex_students" ON public.calfex_students;
+CREATE POLICY "Allow all access to calfex_students" ON public.calfex_students FOR ALL USING (true) WITH CHECK (true);
+`.trim();
+
+  if (!url || !key) {
+    return res.json({
+      connected: false,
+      configured: false,
+      tableExists: false,
+      message: 'SUPABASE_URL e SUPABASE_KEY não configuradas no servidor.',
+      urlConfigured: !!url,
+      keyConfigured: !!key,
+      totalLocalAccounts: Object.keys(cloudDatabase).length,
+      sqlSetupScript
+    });
+  }
+
+  const sb = getSupabase();
+  if (!sb) {
+    return res.json({
+      connected: false,
+      configured: true,
+      tableExists: false,
+      message: 'Falha ao inicializar o cliente Supabase.',
+      sqlSetupScript
+    });
+  }
+
+  try {
+    const { data, error } = await sb.from('calfex_students').select('id').limit(1);
+    if (error) {
+      const isMissingTable = error.code === 'PGRST205' || (error.message && error.message.includes('schema cache'));
+      return res.json({
+        connected: true,
+        configured: true,
+        tableExists: false,
+        tableError: error.message,
+        message: isMissingTable 
+          ? 'Conexão com Supabase ativa, mas a tabela "calfex_students" ainda não foi criada no painel do Supabase.' 
+          : error.message,
+        sqlSetupScript,
+        totalLocalAccounts: Object.keys(cloudDatabase).length
+      });
+    }
+
+    const students = await fetchAllStudentsFromSupabase(sb);
+    return res.json({
+      connected: true,
+      configured: true,
+      tableExists: true,
+      totalCloudAccounts: students.length,
+      totalLocalAccounts: Object.keys(cloudDatabase).length,
+      message: 'Conectado com sucesso ao Supabase e tabela "calfex_students" operacional!'
+    });
+  } catch (err: any) {
+    return res.json({
+      connected: false,
+      configured: true,
+      tableExists: false,
+      error: err?.message || String(err),
+      sqlSetupScript
+    });
+  }
+});
+
+// Endpoint to provide SQL setup script
+app.get('/api/supabase/setup-sql', (req, res) => {
+  res.type('text/plain').send(`
+-- =======================================================
+-- SCRIPT SQL PARA CRIAR TABELA NO SUPABASE (CALFÉX APP)
+-- Acesse: Painel Supabase > SQL Editor > Cole e clique em Run
+-- =======================================================
+
+CREATE TABLE IF NOT EXISTS public.calfex_students (
+  id TEXT PRIMARY KEY,
+  email TEXT,
+  name TEXT,
+  order_number TEXT,
+  class_room TEXT,
+  course TEXT,
+  school_name TEXT,
+  academic_year TEXT,
+  gender TEXT,
+  password_hash TEXT,
+  profile JSONB,
+  subjects JSONB,
+  security_settings JSONB,
+  target_grade NUMERIC,
+  schedule JSONB,
+  pauta_links JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Habilitar RLS e permitir operações da API
+ALTER TABLE public.calfex_students ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all access to calfex_students" ON public.calfex_students;
+CREATE POLICY "Allow all access to calfex_students" ON public.calfex_students FOR ALL USING (true) WITH CHECK (true);
+`.trim());
+});
 
 // Get list of all registered student profiles in the cloud
-app.get('/api/accounts', (req, res) => {
+app.get('/api/accounts', async (req, res) => {
   try {
+    const sb = getSupabase();
+    if (sb) {
+      const data = await fetchAllStudentsFromSupabase(sb);
+      if (Array.isArray(data) && data.length > 0) {
+        const accounts = data.map(row => {
+          const profile = row.profile || {};
+          const safe = {
+            id: row.id || profile.id,
+            name: row.name || profile.name,
+            email: row.email || profile.email,
+            orderNumber: row.order_number || profile.orderNumber,
+            className: row.class_room || profile.className || profile.classRoom,
+            classRoom: row.class_room || profile.classRoom || profile.className,
+            course: row.course || profile.course,
+            schoolName: row.school_name || profile.schoolName,
+            academicYear: row.academic_year || profile.academicYear,
+            gender: row.gender || profile.gender,
+            targetGrade: row.target_grade || profile.targetGrade || 14,
+            registeredAt: profile.registeredAt
+          };
+          return safe;
+        });
+        return res.json({ accounts });
+      }
+    }
+
     const profiles = Object.values(cloudDatabase).map(r => {
       if (!r.profile) return null;
       const safe = { ...r.profile };
-      // Strip raw password from public profile listing
       delete safe.password;
       return safe;
     }).filter(Boolean);
@@ -469,46 +712,376 @@ app.get('/api/accounts', (req, res) => {
   }
 });
 
-// Login from any device using Email, Order Number, or Name + Password
-app.post('/api/accounts/login', (req, res) => {
+// Login from any device using Email, Order Number, or Name + Password or Registration Code
+app.post('/api/accounts/login', async (req, res) => {
   const identifier = req.body?.identifier;
   const password = req.body?.password;
 
   if (!identifier || typeof identifier !== 'string') {
-    return res.status(400).json({ success: false, message: 'Identificador obrigatório' });
+    return res.status(400).json({ success: false, message: 'Por favor, informe o seu E-mail cadastrado.' });
   }
 
   const term = identifier.trim().toLowerCase();
-  const records = Object.values(cloudDatabase);
+  const inputCodeOrPass = password ? password.toString().trim() : '';
+  const sb = getSupabase();
 
-  const matched = records.find(r => {
+  if (sb) {
+    try {
+      const data = await fetchAllStudentsFromSupabase(sb);
+      if (Array.isArray(data) && data.length > 0) {
+        const matchingRows = data.filter(r => {
+          const email = (r.email || r.profile?.email || '').toLowerCase().trim();
+          const orderNum = (r.order_number || r.profile?.orderNumber || '').toString().toLowerCase().trim();
+          const name = (r.name || r.profile?.name || '').toLowerCase().trim();
+          const id = (r.id || r.profile?.id || '').toLowerCase().trim();
+          const regCode = (r.profile?.registrationCode || '').toString().toLowerCase().trim();
+          
+          return (
+            email === term ||
+            (term.includes('@') && email.startsWith(term.split('@')[0]) && email.endsWith(term.split('@')[1])) ||
+            orderNum === term ||
+            id === term ||
+            name === term ||
+            (name.length >= 3 && term.length >= 3 && (name.includes(term) || term.includes(name))) ||
+            regCode === term
+          );
+        });
+
+        if (matchingRows.length > 0) {
+          // Sort by updated_at descending to check freshest first
+          matchingRows.sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime());
+
+          let matchedRow = null;
+          if (inputCodeOrPass) {
+            for (const r of matchingRows) {
+              const storedHash = r.password_hash || r.profile?.password || r.security_settings?.pinCode;
+              const regCode = r.profile?.registrationCode || '';
+              const isRegCodeMatch = regCode && (
+                regCode.toLowerCase() === inputCodeOrPass.toLowerCase() ||
+                regCode.replace(/\D/g, '') === inputCodeOrPass.replace(/\D/g, '')
+              );
+              const isPassMatch = storedHash ? verifyPassword(inputCodeOrPass, storedHash.toString()) : true;
+
+              if (isPassMatch || isRegCodeMatch) {
+                matchedRow = r;
+                break;
+              }
+            }
+          } else {
+            matchedRow = matchingRows[0];
+          }
+
+          if (matchedRow) {
+            const safeStudent = { ...(matchedRow.profile || {}) };
+            if (!safeStudent.id && matchedRow.id) safeStudent.id = matchedRow.id;
+            if (!safeStudent.name && matchedRow.name) safeStudent.name = matchedRow.name;
+            if (!safeStudent.email && matchedRow.email) safeStudent.email = matchedRow.email;
+            if (!safeStudent.orderNumber && matchedRow.order_number) safeStudent.orderNumber = matchedRow.order_number;
+            if (!safeStudent.classRoom && matchedRow.class_room) safeStudent.classRoom = matchedRow.class_room;
+            if (!safeStudent.className && matchedRow.class_room) safeStudent.className = matchedRow.class_room;
+            if (!safeStudent.course && matchedRow.course) safeStudent.course = matchedRow.course;
+            if (!safeStudent.schoolName && matchedRow.school_name) safeStudent.schoolName = matchedRow.school_name;
+            if (!safeStudent.academicYear && matchedRow.academic_year) safeStudent.academicYear = matchedRow.academic_year;
+            if (!safeStudent.gender && matchedRow.gender) safeStudent.gender = matchedRow.gender;
+            delete safeStudent.password;
+
+            return res.json({
+              success: true,
+              student: safeStudent,
+              subjects: matchedRow.subjects || [],
+              securitySettings: matchedRow.security_settings || { mode: 'none' },
+              targetGrade: matchedRow.target_grade || safeStudent.targetGrade || 14,
+              schedule: matchedRow.schedule || [],
+              pautaLinks: matchedRow.pauta_links || [],
+              updatedAt: matchedRow.updated_at || new Date().toISOString()
+            });
+          }
+
+          // Matched account was found, but password was wrong on all candidates
+          return res.status(401).json({
+            success: false,
+            message: 'Senha de acesso incorreta. Verifique a senha digitada ou utilize "Esqueci a senha" para receber o código de 6 dígitos no seu e-mail.'
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE LOGIN] Erro na consulta ao Supabase, tentando cache local:', err);
+    }
+  }
+
+  const records = Object.values(cloudDatabase);
+  const matchingRecords = records.filter(r => {
     const p = r.profile;
     if (!p) return false;
+    const email = (p.email || '').toLowerCase().trim();
+    const orderNum = (p.orderNumber || '').toString().toLowerCase().trim();
+    const name = (p.name || '').toLowerCase().trim();
+    const id = (p.id || '').toLowerCase().trim();
+    const regCode = (p.registrationCode || '').toString().toLowerCase().trim();
+    
     return (
-      (p.email && p.email.toLowerCase() === term) ||
-      (p.orderNumber && p.orderNumber.toString() === term) ||
-      (p.name && p.name.toLowerCase() === term) ||
-      (p.name && p.name.toLowerCase().includes(term))
+      email === term ||
+      orderNum === term ||
+      id === term ||
+      name === term ||
+      (name.length >= 3 && term.length >= 3 && (name.includes(term) || term.includes(name))) ||
+      regCode === term
     );
   });
 
-  if (matched) {
-    const studentPass = matched.profile?.password || matched.securitySettings?.pinCode;
-    
-    // If account has password and password was provided, verify it securely
-    if (studentPass && password) {
-      if (!verifyPassword(password.toString(), studentPass.toString())) {
-        return res.status(401).json({
-          success: false,
-          message: 'Senha incorreta. Por favor, verifique a senha digitada e tente novamente.'
-        });
+  if (matchingRecords.length > 0) {
+    let matched = null;
+    if (inputCodeOrPass) {
+      for (const r of matchingRecords) {
+        const studentPass = r.profile?.password || r.securitySettings?.pinCode;
+        const regCode = r.profile?.registrationCode || '';
+        const isRegCodeMatch = regCode && (
+          regCode.toLowerCase() === inputCodeOrPass.toLowerCase() ||
+          regCode.replace(/\D/g, '') === inputCodeOrPass.replace(/\D/g, '')
+        );
+        const isPassMatch = studentPass ? verifyPassword(inputCodeOrPass, studentPass.toString()) : true;
+        if (isPassMatch || isRegCodeMatch) {
+          matched = r;
+          break;
+        }
       }
+    } else {
+      matched = matchingRecords[0];
     }
 
+    if (matched) {
+      const safeStudent = { ...matched.profile };
+      delete safeStudent.password;
+
+      // Auto-sync to Supabase if connected
+      if (sb) {
+        const row = {
+          id: matched.profile.id,
+          email: (matched.profile.email || '').toLowerCase().trim(),
+          name: matched.profile.name,
+          order_number: matched.profile.orderNumber ? String(matched.profile.orderNumber) : null,
+          class_room: matched.profile.className || matched.profile.classRoom || null,
+          course: matched.profile.course || null,
+          school_name: matched.profile.schoolName || null,
+          academic_year: matched.profile.academicYear || null,
+          gender: matched.profile.gender || null,
+          password_hash: matched.profile.password || (matched.securitySettings?.pinCode ? hashPassword(matched.securitySettings.pinCode) : null),
+          profile: matched.profile,
+          subjects: matched.subjects || [],
+          security_settings: matched.securitySettings || {},
+          target_grade: matched.targetGrade || matched.profile.targetGrade || 14,
+          schedule: matched.schedule || [],
+          pauta_links: matched.pautaLinks || [],
+          updated_at: matched.updatedAt || new Date().toISOString()
+        };
+        upsertStudentToSupabase(sb, row).catch(e => console.warn('Background upsert to Supabase failed:', e));
+      }
+
+      return res.json({
+        success: true,
+        student: safeStudent,
+        subjects: matched.subjects || [],
+        securitySettings: matched.securitySettings,
+        targetGrade: matched.targetGrade || matched.profile.targetGrade || 14,
+        schedule: matched.schedule || [],
+        pautaLinks: matched.pautaLinks || [],
+        updatedAt: matched.updatedAt
+      });
+    }
+
+    return res.status(401).json({
+      success: false,
+      message: 'Senha de acesso incorreta. Verifique os dados digitados ou utilize "Esqueci a senha" para recuperar.'
+    });
+  }
+
+  return res.status(404).json({
+    success: false,
+    message: 'Nenhuma conta encontrada com este e-mail. Verifique se o e-mail foi digitado corretamente ou crie um novo cadastro.'
+  });
+});
+
+// Login with E-mail and Registration Code or 6-Digit Verification Code
+app.post('/api/accounts/login-with-code', async (req, res) => {
+  const { email, code, registrationCode, password } = req.body || {};
+
+  if (!email || (!code && !registrationCode && !password)) {
+    return res.status(400).json({
+      success: false,
+      message: 'É obrigatório informar o e-mail e o código de cadastro ou código de verificação.'
+    });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const inputCode = (code || registrationCode || password || '').toString().trim();
+  const sb = getSupabase();
+  let codeValid = false;
+
+  // 1. Check if inputCode matches student's permanent registration code directly
+  if (sb) {
+    try {
+      const { data: matchedRow } = await sb
+        .from('calfex_students')
+        .select('*')
+        .eq('email', cleanEmail)
+        .single();
+
+      if (matchedRow) {
+        const studentProfile = matchedRow.profile || {};
+        const regCode = (studentProfile.registrationCode || '').toString().toLowerCase();
+        const cleanInput = inputCode.toLowerCase();
+
+        if (
+          (regCode && (regCode === cleanInput || regCode.replace(/\D/g, '') === cleanInput.replace(/\D/g, ''))) ||
+          (matchedRow.password_hash && verifyPassword(inputCode, matchedRow.password_hash))
+        ) {
+          codeValid = true;
+          const safeStudent = { ...studentProfile };
+          delete safeStudent.password;
+
+          return res.json({
+            success: true,
+            message: 'Autenticação por código de cadastro realizada com sucesso!',
+            student: safeStudent,
+            subjects: matchedRow.subjects || [],
+            securitySettings: matchedRow.security_settings || { mode: 'none' },
+            targetGrade: matchedRow.target_grade || safeStudent.targetGrade || 14,
+            schedule: matchedRow.schedule || [],
+            pautaLinks: matchedRow.pauta_links || [],
+            updatedAt: matchedRow.updated_at || new Date().toISOString()
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE CHECK REG CODE ERROR]:', err);
+    }
+  }
+
+  // Check in-memory database for permanent registration code
+  const memRecord = Object.values(cloudDatabase).find(r => r.profile?.email?.toLowerCase() === cleanEmail);
+  if (memRecord && memRecord.profile) {
+    const regCode = (memRecord.profile.registrationCode || '').toString().toLowerCase();
+    const cleanInput = inputCode.toLowerCase();
+    if (
+      (regCode && (regCode === cleanInput || regCode.replace(/\D/g, '') === cleanInput.replace(/\D/g, ''))) ||
+      (memRecord.profile.password && verifyPassword(inputCode, memRecord.profile.password))
+    ) {
+      const safeStudent = { ...memRecord.profile };
+      delete safeStudent.password;
+      return res.json({
+        success: true,
+        message: 'Autenticação por código de cadastro realizada com sucesso!',
+        student: safeStudent,
+        subjects: memRecord.subjects || [],
+        securitySettings: memRecord.securitySettings,
+        targetGrade: memRecord.targetGrade || safeStudent.targetGrade || 14,
+        schedule: memRecord.schedule || [],
+        pautaLinks: memRecord.pautaLinks || [],
+        updatedAt: memRecord.updatedAt
+      });
+    }
+  }
+
+  // 2. Check temporary 6-digit email verification code
+  if (sb) {
+    try {
+      const { data: resetData } = await sb
+        .from('calfex_password_resets')
+        .select('*')
+        .eq('email', cleanEmail)
+        .single();
+
+      if (resetData) {
+        if (Date.now() > Number(resetData.expires_at)) {
+          await sb.from('calfex_password_resets').delete().eq('email', cleanEmail);
+          return res.status(400).json({ success: false, message: 'Este código expirou. Solicite um novo código de verificação para o seu e-mail.' });
+        }
+        if (resetData.code === inputCode) {
+          codeValid = true;
+          await sb.from('calfex_password_resets').delete().eq('email', cleanEmail);
+        }
+      }
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE LOGIN WITH CODE ERROR]:', err);
+    }
+  }
+
+  if (!codeValid) {
+    const memoryRecord = passwordResetCodes[cleanEmail];
+    if (memoryRecord) {
+      if (Date.now() > memoryRecord.expiresAt) {
+        delete passwordResetCodes[cleanEmail];
+        return res.status(400).json({ success: false, message: 'Este código expirou. Solicite um novo código.' });
+      }
+      if (memoryRecord.code === inputCode) {
+        codeValid = true;
+        delete passwordResetCodes[cleanEmail];
+      }
+    }
+  }
+
+  if (!codeValid) {
+    return res.status(400).json({
+      success: false,
+      message: 'Código de cadastro ou código de verificação incorreto. Verifique os dados digitados ou solicite um código para o seu e-mail.'
+    });
+  }
+
+  // Code is verified! Now retrieve student profile
+  if (sb) {
+    try {
+      const { data: matchedRow } = await sb
+        .from('calfex_students')
+        .select('*')
+        .eq('email', cleanEmail)
+        .single();
+
+      if (matchedRow) {
+        const studentProfile = matchedRow.profile || {
+          id: matchedRow.id,
+          name: matchedRow.name,
+          email: matchedRow.email,
+          orderNumber: matchedRow.order_number,
+          className: matchedRow.class_room,
+          classRoom: matchedRow.class_room,
+          course: matchedRow.course,
+          schoolName: matchedRow.school_name,
+          academicYear: matchedRow.academic_year,
+          gender: matchedRow.gender,
+          targetGrade: matchedRow.target_grade
+        };
+
+        const safeStudent = { ...studentProfile };
+        delete safeStudent.password;
+
+        return res.json({
+          success: true,
+          message: 'Autenticação por código realizada com sucesso!',
+          student: safeStudent,
+          subjects: matchedRow.subjects || [],
+          securitySettings: matchedRow.security_settings || { mode: 'none' },
+          targetGrade: matchedRow.target_grade || 14,
+          schedule: matchedRow.schedule || [],
+          pautaLinks: matchedRow.pauta_links || [],
+          updatedAt: matchedRow.updated_at || new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE FETCH USER AFTER CODE ERROR]:', err);
+    }
+  }
+
+  // Memory/local cache fallback
+  const records = Object.values(cloudDatabase);
+  const matched = records.find(r => r.profile && r.profile.email && r.profile.email.toLowerCase() === cleanEmail);
+
+  if (matched && matched.profile) {
     const safeStudent = { ...matched.profile };
+    delete safeStudent.password;
 
     return res.json({
       success: true,
+      message: 'Autenticação por código realizada com sucesso!',
       student: safeStudent,
       subjects: matched.subjects || [],
       securitySettings: matched.securitySettings,
@@ -519,9 +1092,32 @@ app.post('/api/accounts/login', (req, res) => {
     });
   }
 
-  return res.status(404).json({
-    success: false,
-    message: 'Nenhuma conta encontrada na nuvem com essas informações. Verifique os dados digitados ou crie um novo cadastro.'
+  // If new user verified their email for login, create an initial student profile
+  const newStudentId = `std_${Date.now()}`;
+  const generatedProfile = {
+    id: newStudentId,
+    name: cleanEmail.split('@')[0],
+    email: cleanEmail,
+    orderNumber: 1,
+    className: 'Turma A',
+    classRoom: 'Turma A',
+    course: 'Ensino Geral',
+    schoolName: 'Complexo Escolar Calféx',
+    academicYear: '2025 / 2026',
+    gender: 'masculino' as const,
+    targetGrade: 14.0,
+    registrationDate: new Date().toISOString()
+  };
+
+  return res.json({
+    success: true,
+    message: 'Código confirmado com sucesso!',
+    student: generatedProfile,
+    subjects: [],
+    securitySettings: { mode: 'none' },
+    targetGrade: 14.0,
+    schedule: [],
+    pautaLinks: []
   });
 });
 
@@ -534,43 +1130,80 @@ app.post('/api/accounts/forgot-password', async (req, res) => {
   }
 
   const term = identifier.trim().toLowerCase();
-  const records = Object.values(cloudDatabase);
-
-  const matched = records.find(r => {
-    const p = r.profile;
-    if (!p) return false;
-    return (
-      (p.email && p.email.toLowerCase() === term) ||
-      (p.orderNumber && p.orderNumber.toString() === term) ||
-      (p.name && p.name.toLowerCase() === term) ||
-      (p.name && p.name.toLowerCase().includes(term))
-    );
-  });
-
   let targetEmail = '';
   let studentName = 'Estudante';
   let studentId = '';
 
-  if (matched && matched.profile) {
-    const profile = matched.profile;
-    targetEmail = profile.email || `${profile.name.toLowerCase().replace(/\s+/g, '')}@calfex.ao`;
-    studentName = profile.name || 'Estudante';
-    studentId = profile.id;
-  } else if (term.includes('@') && term.includes('.')) {
-    // Direct email address provided
-    targetEmail = term;
-    studentName = term.split('@')[0];
-    studentId = `std_${Date.now()}`;
-  } else {
-    return res.status(404).json({
-      success: false,
-      message: 'Não encontramos nenhuma conta com essas informações cadastradas. Digite o seu endereço de e-mail cadastrado.'
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      const { data } = await sb.from('calfex_students').select('*');
+      if (Array.isArray(data)) {
+        const match = data.find(r => {
+          const email = (r.email || '').toLowerCase();
+          const orderNum = (r.order_number || '').toString().toLowerCase();
+          const name = (r.name || '').toLowerCase();
+          const id = (r.id || '').toLowerCase();
+          return email === term || orderNum === term || id === term || name === term || name.includes(term);
+        });
+        if (match) {
+          targetEmail = match.email;
+          studentName = match.name || 'Estudante';
+          studentId = match.id;
+        }
+      }
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE FORGOT PASSWORD SEARCH ERROR]:', err);
+    }
+  }
+
+  if (!targetEmail) {
+    const records = Object.values(cloudDatabase);
+    const matched = records.find(r => {
+      const p = r.profile;
+      if (!p) return false;
+      return (
+        (p.email && p.email.toLowerCase() === term) ||
+        (p.orderNumber && p.orderNumber.toString() === term) ||
+        (p.name && p.name.toLowerCase() === term) ||
+        (p.name && p.name.toLowerCase().includes(term))
+      );
     });
+
+    if (matched && matched.profile) {
+      const profile = matched.profile;
+      targetEmail = profile.email || `${profile.name.toLowerCase().replace(/\s+/g, '')}@calfex.ao`;
+      studentName = profile.name || 'Estudante';
+      studentId = profile.id;
+    } else if (term.includes('@') && term.includes('.')) {
+      targetEmail = term;
+      studentName = term.split('@')[0];
+      studentId = `std_${Date.now()}`;
+    } else {
+      return res.status(404).json({
+        success: false,
+        message: 'Não encontramos nenhuma conta com essas informações cadastradas. Digite o seu endereço de e-mail cadastrado.'
+      });
+    }
   }
   
   // Generate a random 6-digit numeric verification code
   const code = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes validity (requirement 5)
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes validity
+
+  if (sb) {
+    try {
+      await sb.from('calfex_password_resets').upsert({
+        email: targetEmail.toLowerCase(),
+        code: code,
+        student_id: studentId,
+        student_name: studentName,
+        expires_at: expiresAt
+      }, { onConflict: 'email' });
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE SAVE RESET CODE ERROR]:', err);
+    }
+  }
 
   passwordResetCodes[targetEmail.toLowerCase()] = {
     code,
@@ -579,7 +1212,6 @@ app.post('/api/accounts/forgot-password', async (req, res) => {
     studentName
   };
 
-  // Mask email for privacy (e.g. m***l@gmail.com)
   const atIndex = targetEmail.indexOf('@');
   let maskedEmail = targetEmail;
   if (atIndex > 2) {
@@ -588,10 +1220,7 @@ app.post('/api/accounts/forgot-password', async (req, res) => {
     maskedEmail = `${namePart[0]}***${namePart[namePart.length - 1]}${domainPart}`;
   }
 
-  // Dispatch email with CalFéx official sender (calfex39@gmail.com)
   const emailResult = await sendCalfexVerificationEmail(targetEmail, studentName, code);
-
-  // Log email dispatch to server console for auditing and monitoring
   console.log(`[CALFÉX EMAIL SECURITY] Enviado código de verificação para o e-mail: ${targetEmail} a partir de ${CALFEX_SENDER_EMAIL} (Código: ${code}, Enviado: ${emailResult.sent})`);
 
   return res.json({
@@ -613,7 +1242,6 @@ app.post('/api/accounts/forgot-password', async (req, res) => {
 app.post('/api/auth/send-verification-code', async (req, res, next) => {
   const { email, identifier, name } = req.body || {};
   req.body.identifier = email || identifier || name;
-  // Forward to forgot-password handler
   const term = (req.body.identifier || '').trim().toLowerCase();
   if (!term) {
     return res.status(400).json({ success: false, message: 'Endereço de e-mail é obrigatório para envio do código.' });
@@ -623,6 +1251,21 @@ app.post('/api/auth/send-verification-code', async (req, res, next) => {
   const expiresAt = Date.now() + 10 * 60 * 1000;
   const targetEmail = term;
   const studentName = name || (term.includes('@') ? term.split('@')[0] : 'Estudante');
+
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      await sb.from('calfex_password_resets').upsert({
+        email: targetEmail.toLowerCase(),
+        code: code,
+        student_id: `std_${Date.now()}`,
+        student_name: studentName,
+        expires_at: expiresAt
+      }, { onConflict: 'email' });
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE SAVE CODE ERROR]:', err);
+    }
+  }
 
   passwordResetCodes[targetEmail.toLowerCase()] = {
     code,
@@ -673,24 +1316,52 @@ app.post('/api/send-test-email', async (req, res) => {
 });
 
 // Verify Password / Auth Reset Code
-app.post(['/api/accounts/verify-reset-code', '/api/auth/verify-code'], (req, res) => {
+app.post(['/api/accounts/verify-reset-code', '/api/auth/verify-code'], async (req, res) => {
   const { email, code } = req.body;
 
   if (!email || !code) {
     return res.status(400).json({ success: false, message: 'E-mail e código de verificação são obrigatórios.' });
   }
 
-  const record = passwordResetCodes[email.trim().toLowerCase()];
+  const cleanEmail = email.trim().toLowerCase();
+  const inputCode = code.toString().trim();
+  const sb = getSupabase();
+
+  if (sb) {
+    try {
+      const { data: resetRows } = await sb
+        .from('calfex_password_resets')
+        .select('*')
+        .eq('email', cleanEmail)
+        .order('expires_at', { ascending: false });
+
+      if (Array.isArray(resetRows) && resetRows.length > 0) {
+        const resetItem = resetRows[0];
+        if (Date.now() > Number(resetItem.expires_at)) {
+          await sb.from('calfex_password_resets').delete().eq('email', cleanEmail);
+          return res.status(400).json({ success: false, message: 'Este código expirou (validade de 10 minutos). Solicite um novo código.' });
+        }
+        if (resetItem.code === inputCode) {
+          return res.json({ success: true, message: 'Código validado com sucesso!' });
+        }
+        return res.status(400).json({ success: false, message: 'Código de verificação incorreto. Verifique os 6 dígitos digitados.' });
+      }
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE VERIFY CODE ERROR]:', err);
+    }
+  }
+
+  const record = passwordResetCodes[cleanEmail];
   if (!record) {
     return res.status(400).json({ success: false, message: 'Nenhum código pendente para este e-mail. Solicite um novo código.' });
   }
 
   if (Date.now() > record.expiresAt) {
-    delete passwordResetCodes[email.trim().toLowerCase()];
+    delete passwordResetCodes[cleanEmail];
     return res.status(400).json({ success: false, message: 'Este código expirou (validade de 10 minutos). Solicite um novo código.' });
   }
 
-  if (record.code !== code.toString().trim()) {
+  if (record.code !== inputCode) {
     return res.status(400).json({ success: false, message: 'Código de verificação incorreto. Verifique os 6 dígitos digitados.' });
   }
 
@@ -698,7 +1369,7 @@ app.post(['/api/accounts/verify-reset-code', '/api/auth/verify-code'], (req, res
 });
 
 // Reset and Update Password in Cloud DB
-app.post('/api/accounts/reset-password', (req, res) => {
+app.post('/api/accounts/reset-password', async (req, res) => {
   const { email, code, newPassword } = req.body;
 
   if (!email || !newPassword || newPassword.toString().trim().length < 4) {
@@ -706,23 +1377,65 @@ app.post('/api/accounts/reset-password', (req, res) => {
   }
 
   const cleanEmail = email.trim().toLowerCase();
-  const resetRecord = passwordResetCodes[cleanEmail];
+  const cleanPass = newPassword.toString().trim();
+  const hashedPass = hashPassword(cleanPass);
+  const sb = getSupabase();
+  let targetStudentId: string | null = null;
+  let studentProfileFromDb: any = null;
 
-  // If code provided, verify it (unless direct reset match found)
-  if (code) {
-    if (!resetRecord || resetRecord.code !== code.toString().trim()) {
-      return res.status(400).json({ success: false, message: 'Código de verificação inválido ou expirado.' });
+  if (sb) {
+    try {
+      if (code) {
+        const { data: resetRows } = await sb
+          .from('calfex_password_resets')
+          .select('*')
+          .eq('email', cleanEmail)
+          .order('expires_at', { ascending: false });
+
+        if (Array.isArray(resetRows) && resetRows.length > 0) {
+          const resetData = resetRows[0];
+          if (Date.now() > Number(resetData.expires_at)) {
+            await sb.from('calfex_password_resets').delete().eq('email', cleanEmail);
+            return res.status(400).json({ success: false, message: 'Código de verificação expirado.' });
+          }
+          if (resetData.code !== code.toString().trim()) {
+            return res.status(400).json({ success: false, message: 'Código de verificação inválido.' });
+          }
+          targetStudentId = resetData.student_id;
+        }
+      }
+
+      // Fetch student to get complete profile
+      const { data: stdRows } = await sb
+        .from('calfex_students')
+        .select('*')
+        .eq('email', cleanEmail)
+        .order('updated_at', { ascending: false });
+
+      if (Array.isArray(stdRows) && stdRows.length > 0) {
+        const stdData = stdRows[0];
+        studentProfileFromDb = stdData.profile || { id: stdData.id, name: stdData.name, email: stdData.email };
+        const updatedProfile = { ...(studentProfileFromDb), password: hashedPass };
+        
+        await sb.from('calfex_students').update({
+          password_hash: hashedPass,
+          profile: updatedProfile,
+          security_settings: { mode: 'pin', pinCode: hashedPass },
+          updated_at: new Date().toISOString()
+        }).eq('email', cleanEmail);
+
+        await sb.from('calfex_password_resets').delete().eq('email', cleanEmail);
+        console.log(`[CALFÉX SUPABASE PASSWORD RESET] ✅ Senha atualizada no Supabase para ${cleanEmail}`);
+      }
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE RESET PASSWORD ERROR]:', err);
     }
   }
 
-  // Find student in cloud database
-  const studentId = resetRecord ? resetRecord.studentId : null;
-  let targetRecordKey: string | null = null;
+  const resetRecord = passwordResetCodes[cleanEmail];
+  let targetRecordKey: string | null = targetStudentId || (resetRecord ? resetRecord.studentId : null);
 
-  if (studentId && cloudDatabase[studentId]) {
-    targetRecordKey = studentId;
-  } else {
-    // Lookup by email
+  if (!targetRecordKey || !cloudDatabase[targetRecordKey]) {
     const keys = Object.keys(cloudDatabase);
     for (const k of keys) {
       if (cloudDatabase[k]?.profile?.email?.toLowerCase() === cleanEmail) {
@@ -732,39 +1445,32 @@ app.post('/api/accounts/reset-password', (req, res) => {
     }
   }
 
-  if (!targetRecordKey || !cloudDatabase[targetRecordKey]) {
-    return res.status(404).json({ success: false, message: 'Conta do estudante não encontrada na nuvem.' });
+  if (targetRecordKey && cloudDatabase[targetRecordKey]) {
+    cloudDatabase[targetRecordKey].profile.password = hashedPass;
+    if (!cloudDatabase[targetRecordKey].securitySettings) {
+      cloudDatabase[targetRecordKey].securitySettings = { mode: 'pin', pinCode: hashedPass };
+    } else {
+      cloudDatabase[targetRecordKey].securitySettings.pinCode = hashedPass;
+    }
+    cloudDatabase[targetRecordKey].updatedAt = new Date().toISOString();
+    saveCloudDb(cloudDatabase);
   }
 
-  // Update password in student profile and security settings
-  const cleanPass = newPassword.toString().trim();
-  const hashedPass = hashPassword(cleanPass);
-  cloudDatabase[targetRecordKey].profile.password = hashedPass;
-  
-  if (!cloudDatabase[targetRecordKey].securitySettings) {
-    cloudDatabase[targetRecordKey].securitySettings = { mode: 'pin', pinCode: hashedPass };
-  } else {
-    cloudDatabase[targetRecordKey].securitySettings.pinCode = hashedPass;
-  }
-  
-  cloudDatabase[targetRecordKey].updatedAt = new Date().toISOString();
-  saveCloudDb(cloudDatabase);
-
-  // Clean up used code
   delete passwordResetCodes[cleanEmail];
 
-  const safeReturnProfile = { ...cloudDatabase[targetRecordKey].profile };
-  delete safeReturnProfile.password;
+  const returnProfile = studentProfileFromDb || (targetRecordKey && cloudDatabase[targetRecordKey]?.profile) || null;
+  const safeProfile = returnProfile ? { ...returnProfile } : null;
+  if (safeProfile) delete safeProfile.password;
 
   return res.json({
     success: true,
     message: 'Senha redefinida com sucesso!',
-    student: safeReturnProfile
+    student: safeProfile
   });
 });
 
 // Register or update student account in the cloud
-app.post('/api/accounts/register', (req, res) => {
+app.post('/api/accounts/register', async (req, res) => {
   const { profile, subjects, securitySettings, targetGrade, schedule, pautaLinks } = req.body;
 
   if (!profile || !profile.id || !profile.email) {
@@ -775,27 +1481,68 @@ app.post('/api/accounts/register', (req, res) => {
   const now = new Date().toISOString();
 
   const secureProfile = { ...profile };
+  const rawPass = secureProfile.password ? secureProfile.password.toString().trim() : '';
+  const passHash = rawPass ? hashPassword(rawPass) : null;
+
   if (secureProfile.password) {
-    secureProfile.password = hashPassword(secureProfile.password);
+    secureProfile.password = passHash;
   }
 
-  // Ensure securitySettings has pin/password if profile has password
   const finalSecSettings = securitySettings ? { ...securitySettings } : {
     mode: profile.password ? 'pin' : 'none',
-    pinCode: profile.password ? hashPassword(profile.password) : ''
+    pinCode: passHash || ''
   };
 
   if (finalSecSettings.pinCode) {
     finalSecSettings.pinCode = hashPassword(finalSecSettings.pinCode);
   }
 
+  const subjectsList = Array.isArray(subjects) ? subjects : [];
+  const scheduleList = Array.isArray(schedule) ? schedule : [];
+  const linksList = Array.isArray(pautaLinks) ? pautaLinks : [];
+  const target = targetGrade || profile.targetGrade || 14;
+
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      const row = {
+        id: studentId,
+        email: (profile.email || '').toLowerCase().trim(),
+        name: profile.name || 'Estudante',
+        order_number: profile.orderNumber ? String(profile.orderNumber) : null,
+        class_room: profile.className || profile.classRoom || null,
+        course: profile.course || null,
+        school_name: profile.schoolName || null,
+        academic_year: profile.academicYear || null,
+        gender: profile.gender || null,
+        password_hash: passHash || finalSecSettings.pinCode || null,
+        profile: secureProfile,
+        subjects: subjectsList,
+        security_settings: finalSecSettings,
+        target_grade: target,
+        schedule: scheduleList,
+        pauta_links: linksList,
+        updated_at: now
+      };
+
+      const result = await upsertStudentToSupabase(sb, row);
+      if (result.success) {
+        console.log(`[CALFÉX SUPABASE REGISTER] ✅ Conta ${profile.email} (${studentId}) salva com sucesso no Supabase.`);
+      } else {
+        console.warn('[CALFÉX SUPABASE REGISTER NOTICE]:', result.error);
+      }
+    } catch (err) {
+      console.error('[CALFÉX SUPABASE REGISTER EXCEPTION]:', err);
+    }
+  }
+
   cloudDatabase[studentId] = {
     profile: secureProfile,
-    subjects: Array.isArray(subjects) ? subjects : (cloudDatabase[studentId]?.subjects || []),
+    subjects: subjectsList,
     securitySettings: finalSecSettings,
-    targetGrade: targetGrade || profile.targetGrade || 14,
-    schedule: schedule || cloudDatabase[studentId]?.schedule || [],
-    pautaLinks: pautaLinks || cloudDatabase[studentId]?.pautaLinks || [],
+    targetGrade: target,
+    schedule: scheduleList,
+    pautaLinks: linksList,
     updatedAt: now
   };
 
@@ -807,30 +1554,82 @@ app.post('/api/accounts/register', (req, res) => {
   res.json({
     success: true,
     student: safeStudent,
-    subjects: cloudDatabase[studentId].subjects,
+    subjects: subjectsList,
     updatedAt: now
   });
 });
 
 // Sync student data to cloud
-app.post('/api/students/:id/sync', (req, res) => {
+app.post('/api/students/:id/sync', async (req, res) => {
   const studentId = req.params.id;
   const { profile, subjects, securitySettings, targetGrade, schedule, pautaLinks } = req.body;
-
   const now = new Date().toISOString();
+
+  const subjectsList = Array.isArray(subjects) ? subjects : [];
+  const scheduleList = Array.isArray(schedule) ? schedule : [];
+  const linksList = Array.isArray(pautaLinks) ? pautaLinks : [];
+
+  let secureProfile = profile ? { ...profile } : undefined;
+  let passHash: string | null = null;
+  if (secureProfile) {
+    if (secureProfile.password) {
+      secureProfile.password = hashPassword(secureProfile.password);
+      passHash = secureProfile.password;
+    }
+  }
+
+  const finalSecSettings = securitySettings ? { ...securitySettings } : undefined;
+  if (finalSecSettings && finalSecSettings.pinCode) {
+    finalSecSettings.pinCode = hashPassword(finalSecSettings.pinCode);
+    if (!passHash) passHash = finalSecSettings.pinCode;
+  }
+
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      const row: any = {
+        id: studentId,
+        updated_at: now
+      };
+      if (subjects !== undefined) row.subjects = subjectsList;
+      if (securitySettings !== undefined) row.security_settings = finalSecSettings;
+      if (targetGrade !== undefined) row.target_grade = targetGrade;
+      if (schedule !== undefined) row.schedule = scheduleList;
+      if (pautaLinks !== undefined) row.pauta_links = linksList;
+      if (secureProfile) {
+        row.profile = secureProfile;
+        if (secureProfile.name) row.name = secureProfile.name;
+        if (secureProfile.email) row.email = secureProfile.email.toLowerCase().trim();
+        if (secureProfile.orderNumber) row.order_number = String(secureProfile.orderNumber);
+        if (secureProfile.className || secureProfile.classRoom) row.class_room = secureProfile.className || secureProfile.classRoom;
+        if (secureProfile.course) row.course = secureProfile.course;
+        if (secureProfile.schoolName) row.school_name = secureProfile.schoolName;
+        if (secureProfile.academicYear) row.academic_year = secureProfile.academicYear;
+        if (secureProfile.gender) row.gender = secureProfile.gender;
+      }
+      if (passHash) {
+        row.password_hash = passHash;
+      }
+
+      await upsertStudentToSupabase(sb, row);
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE SYNC ERROR]:', err);
+    }
+  }
+
   const existing = cloudDatabase[studentId] || {
-    profile: profile || { id: studentId, name: 'Estudante' },
+    profile: secureProfile || { id: studentId, name: 'Estudante' },
     subjects: [],
     updatedAt: now
   };
 
   cloudDatabase[studentId] = {
-    profile: profile || existing.profile,
-    subjects: Array.isArray(subjects) ? subjects : existing.subjects,
-    securitySettings: securitySettings !== undefined ? securitySettings : existing.securitySettings,
+    profile: secureProfile || existing.profile,
+    subjects: subjects !== undefined ? subjectsList : existing.subjects,
+    securitySettings: finalSecSettings !== undefined ? finalSecSettings : existing.securitySettings,
     targetGrade: targetGrade !== undefined ? targetGrade : existing.targetGrade,
-    schedule: schedule !== undefined ? schedule : existing.schedule,
-    pautaLinks: pautaLinks !== undefined ? pautaLinks : existing.pautaLinks,
+    schedule: schedule !== undefined ? scheduleList : existing.schedule,
+    pautaLinks: pautaLinks !== undefined ? linksList : existing.pautaLinks,
     updatedAt: now
   };
 
@@ -840,17 +1639,44 @@ app.post('/api/students/:id/sync', (req, res) => {
 });
 
 // Get complete data for student from cloud
-app.get('/api/students/:id/data', (req, res) => {
+app.get('/api/students/:id/data', async (req, res) => {
   const studentId = req.params.id;
-  const record = cloudDatabase[studentId];
+  const sb = getSupabase();
 
+  if (sb) {
+    try {
+      const data = await fetchStudentByIdOrEmailFromSupabase(sb, studentId);
+      if (data) {
+        const safeStudent = { ...(data.profile || {}) };
+        delete safeStudent.password;
+
+        return res.json({
+          success: true,
+          student: safeStudent,
+          subjects: data.subjects || [],
+          securitySettings: data.security_settings || { mode: 'none' },
+          targetGrade: data.target_grade || safeStudent.targetGrade || 14,
+          schedule: data.schedule || [],
+          pautaLinks: data.pauta_links || [],
+          updatedAt: data.updated_at || new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE FETCH DATA ERROR]:', err);
+    }
+  }
+
+  const record = cloudDatabase[studentId];
   if (!record) {
     return res.status(404).json({ success: false, message: 'Estudante não encontrado na nuvem' });
   }
 
+  const safeStudent = { ...record.profile };
+  delete safeStudent.password;
+
   res.json({
     success: true,
-    student: record.profile,
+    student: safeStudent,
     subjects: record.subjects || [],
     securitySettings: record.securitySettings,
     targetGrade: record.targetGrade,
@@ -861,8 +1687,18 @@ app.get('/api/students/:id/data', (req, res) => {
 });
 
 // Delete student account permanently from cloud
-app.delete('/api/students/:id', (req, res) => {
+app.delete('/api/students/:id', async (req, res) => {
   const studentId = req.params.id;
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      await sb.from('calfex_students').delete().eq('id', studentId);
+      await sb.from('students').delete().eq('id', studentId);
+      console.log(`[CALFÉX SUPABASE DELETE] ✅ Conta ${studentId} eliminada do Supabase.`);
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE DELETE ERROR]:', err);
+    }
+  }
   if (cloudDatabase[studentId]) {
     delete cloudDatabase[studentId];
     saveCloudDb(cloudDatabase);
@@ -871,8 +1707,16 @@ app.delete('/api/students/:id', (req, res) => {
 });
 
 // Delete account by email or id
-app.delete('/api/accounts/:idOrEmail', (req, res) => {
+app.delete('/api/accounts/:idOrEmail', async (req, res) => {
   const param = req.params.idOrEmail;
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      await sb.from('calfex_students').delete().or(`id.eq.${param},email.eq.${param.toLowerCase()}`);
+    } catch (err) {
+      console.warn('[CALFÉX SUPABASE DELETE ACCOUNT ERROR]:', err);
+    }
+  }
   if (cloudDatabase[param]) {
     delete cloudDatabase[param];
     saveCloudDb(cloudDatabase);
@@ -887,105 +1731,14 @@ app.delete('/api/accounts/:idOrEmail', (req, res) => {
   res.json({ success: true, message: 'Conta removida com sucesso.' });
 });
 
-// ==========================================
-// 4. AI ASSISTANT ROUTE (TEXT & AUDIO SUPPORT)
-// ==========================================
-const handleAiAssistantRequest = async (req: express.Request, res: express.Response) => {
-  const prompt = req.body?.prompt || '';
-  const audioBase64 = req.body?.audioBase64;
-  const audioMimeType = req.body?.audioMimeType || 'audio/webm';
-
-  if (!prompt && !audioBase64) {
-    return res.status(400).json({ error: 'Envie um texto ou áudio para a IA processar.' });
-  }
-
-  const effectivePrompt = prompt.trim() || 'Por favor, ouça esta mensagem de áudio enviada pelo estudante no aplicativo CalFéx Pro e responda com clareza didática, objetividade e empatia.';
-
-  const ai = getGeminiClient();
-
-  if (!ai) {
-    const rawFallback = generateLocalFallbackResponse(effectivePrompt);
-    const cleanFallback = cleanAiResponse(rawFallback, effectivePrompt);
-    return res.json({ reply: cleanFallback, isLocal: true });
-  }
-
-  // Build chat context
-  let fullPrompt = effectivePrompt;
-  const conversationHistory = req.body?.conversationHistory;
-  if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
-    const historyText = conversationHistory
-      .slice(-6)
-      .map((m: { role: string; content: string }) => `${m.role === 'user' ? 'Aluno' : 'CalFéx IA'}: ${m.content}`)
-      .join('\n');
-    fullPrompt = `Histórico da conversa:\n${historyText}\n\nAluno: ${effectivePrompt}\nCalFéx IA:`;
-  }
-
-  // Build multimodal content parts
-  const contentParts: any[] = [];
-  if (audioBase64 && typeof audioBase64 === 'string') {
-    // Strip data URI header if present
-    const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
-    contentParts.push({
-      inlineData: {
-        mimeType: audioMimeType,
-        data: cleanBase64,
-      }
-    });
-  }
-  contentParts.push({ text: fullPrompt });
-
-  const candidateModels = [
-    'gemini-3.7-flash',
-    'gemini-flash-latest',
-    'gemini-3.1-flash-lite',
-    'gemini-2.5-flash',
-  ];
-
-  let replyText: string | null = null;
-  let lastError: any = null;
-
-  for (const modelName of candidateModels) {
-    try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: contentParts.length === 1 ? fullPrompt : contentParts,
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          temperature: 0.7,
-        },
-      });
-
-      if (response && response.text) {
-        replyText = response.text;
-        break;
-      }
-    } catch (err: any) {
-      lastError = err;
-      console.warn(`Model ${modelName} encountered (${err?.status || err?.message || 'Error'}). Proceeding to next model...`);
-    }
-  }
-
-  if (replyText) {
-    const sanitizedReply = cleanAiResponse(replyText, effectivePrompt);
-    return res.json({ reply: sanitizedReply, isLocal: false });
-  }
-
-  console.warn('All AI models unavailable, serving smart local fallback. Last error:', lastError?.message || lastError);
-  const rawFallback = generateLocalFallbackResponse(effectivePrompt);
-  const sanitizedFallback = cleanAiResponse(rawFallback, effectivePrompt);
-  return res.json({ reply: sanitizedFallback, isLocal: true });
-};
-
-app.post('/api/ai/assistant', handleAiAssistantRequest);
-app.post('/api/gemini/assistant', handleAiAssistantRequest);
-
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', app: 'CalFéx Pro', creator: 'Melcaniel Ulima', cloudSync: 'active' });
+  res.json({ status: 'ok', app: 'Calféx', creator: 'Melcaniel Ulima', cloudSync: 'active' });
 });
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -1000,7 +1753,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`CalFéx Pro Server running with Cloud Sync on http://localhost:${PORT}`);
+    console.log(`Calféx Server running with Cloud Sync on http://localhost:${PORT}`);
   });
 }
 

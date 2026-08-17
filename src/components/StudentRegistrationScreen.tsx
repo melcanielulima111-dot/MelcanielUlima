@@ -122,7 +122,7 @@ export const StudentRegistrationScreen: React.FC<StudentRegistrationScreenProps>
             <div>
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30 mb-1.5">
                 <Sparkles className="w-3 h-3 text-amber-300" />
-                <span>CalFéx Pro • Sistema Escolar 0-20</span>
+                <span>Calféx • Sistema Escolar 0-20</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-black text-white font-heading tracking-tight">
                 Cadastro do Estudante
@@ -366,7 +366,7 @@ export const StudentRegistrationScreen: React.FC<StudentRegistrationScreenProps>
               type="submit"
               className="w-full py-3.5 px-6 rounded-2xl text-sm sm:text-base font-extrabold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 hover:from-blue-500 hover:via-indigo-500 hover:to-cyan-500 shadow-xl shadow-blue-600/30 hover:shadow-blue-600/40 hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2.5 cursor-pointer"
             >
-              <span>Iniciar CalFéx Pro</span>
+              <span>Iniciar Calféx</span>
               <ArrowRight className="w-5 h-5" />
             </button>
             <p className="text-center text-[11px] text-slate-400 mt-2.5 flex items-center justify-center gap-1.5">

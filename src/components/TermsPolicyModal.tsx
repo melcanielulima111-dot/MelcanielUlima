@@ -28,7 +28,7 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
                 <span>Termos de Uso & Políticas de Privacidade</span>
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                CalFéx Pro • Compromisso com a Transparência e Segurança do Estudante
+                Calféx • Compromisso com a Transparência e Segurança do Estudante
               </p>
             </div>
           </div>
@@ -48,10 +48,10 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
             <Lock className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
             <div>
               <h4 className="font-bold text-slate-900 dark:text-white text-xs sm:text-sm mb-1">
-                Privacidade Total no Dispositivo (Offline-First)
+                Privacidade e Armazenamento Seguro
               </h4>
               <p className="text-xs text-slate-600 dark:text-slate-400">
-                Todas as suas notas, fotografias, perfis e boletins são armazenados <strong>exclusivamente na memória local do seu navegador</strong>. A CalFéx Pro não comercializa nem transfere seus dados escolares para terceiros.
+                Todas as suas notas, fotografias, perfis e boletins são armazenados de forma segura na nuvem e no dispositivo. A Calféx não comercializa nem transfere seus dados escolares para terceiros.
               </p>
             </div>
           </div>
@@ -64,7 +64,7 @@ export const TermsPolicyModal: React.FC<TermsPolicyModalProps> = ({
             </div>
             <ul className="space-y-2 list-disc list-inside text-slate-600 dark:text-slate-400 text-xs pl-1">
               <li>
-                <strong>Finalidade Acadêmica:</strong> A aplicação CalFéx Pro foi concebida exclusivamente para auxiliar estudantes no acompanhamento, cálculo e previsão de médias escolares na escala de 0 a 20 valores do sistema de ensino de Angola.
+                <strong>Finalidade Acadêmica:</strong> A aplicação Calféx foi concebida exclusivamente para auxiliar estudantes no acompanhamento, cálculo e previsão de médias escolares na escala de 0 a 20 valores do sistema de ensino de Angola.
               </li>
               <li>
                 <strong>Fórmulas Oficiais:</strong> As médias trimestrais obedecem rigorosamente à regra $MT = (P1 + P2 + MAC) / 3$ e a Média Final à regra $MFD = (MT1 + MT2 + MT3) / 3$, com suporte a ponderação por pesos de disciplinas.

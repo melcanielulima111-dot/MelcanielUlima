@@ -9,7 +9,9 @@ import {
   ArrowRight,
   TrendingUp,
   Sliders,
-  HelpCircle
+  HelpCircle,
+  RotateCcw,
+  Star
 } from 'lucide-react';
 import { Subject, SupportedLanguage } from '../types';
 import { calculateQuarterAverage } from '../utils/gradeCalculations';
@@ -28,7 +30,9 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
 }) => {
   const t = getTranslation(lang);
   const [calcMode, setCalcMode] = useState<'quarter' | 'annual'>('quarter');
-  const [target, setTarget] = useState<number>(defaultTarget || 14.0);
+  
+  // Desired grade state: strictly local to this calculator so it does not interfere with the user's global profile target
+  const [desiredGrade, setDesiredGrade] = useState<number>(defaultTarget || 14.0);
 
   // Quarter mode states (empty string represents a blank note)
   const [p1, setP1] = useState<string>('12');
@@ -56,7 +60,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
     const filledEntries = entries.filter(e => e.value !== null && !isNaN(e.value));
     const blankEntries = entries.filter(e => e.value === null || isNaN(e.value));
     const filledSum = filledEntries.reduce((acc, curr) => acc + (curr.value || 0), 0);
-    const targetTotal = target * 3;
+    const targetTotal = desiredGrade * 3;
     const passTotal = 10.0 * 3; // 30.0
 
     // 0 blank (all 3 filled)
@@ -65,8 +69,8 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
       return {
         type: 'all_filled' as const,
         average: avg,
-        diff: avg - target,
-        message: avg >= target ? 'Meta já alcançada com sucesso!' : `Faltam ${(target - avg).toFixed(1)} valores para atingir a meta.`,
+        diff: avg - desiredGrade,
+        message: avg >= desiredGrade ? 'Nota desejada alcançada com sucesso!' : `Faltam ${(desiredGrade - avg).toFixed(1)} valores para atingir a nota desejada.`,
         isApproved: avg >= 10.0,
       };
     }
@@ -89,7 +93,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
       };
     }
 
-    // 2 blank (1 filled, 2 missing) - User requested feature
+    // 2 blank (1 filled, 2 missing)
     if (blankEntries.length === 2) {
       const singleFilled = filledEntries[0];
       const neededSumTarget = targetTotal - singleFilled.value!;
@@ -114,7 +118,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
     // 3 blank (all empty)
     return {
       type: 'all_empty' as const,
-      neededEachTarget: target,
+      neededEachTarget: desiredGrade,
       neededEachPass: 10.0,
     };
   };
@@ -146,7 +150,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
     const blanks = trimesters.filter(t => t.value === null || isNaN(t.value));
     const filledSum = filled.reduce((acc, curr) => acc + (curr.value || 0), 0);
 
-    const targetAnnualTotal = target * 3;
+    const targetAnnualTotal = desiredGrade * 3;
     const passAnnualTotal = 10.0 * 3;
 
     if (blanks.length === 0) {
@@ -155,7 +159,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
         mode: 'all_filled' as const,
         mfd: Math.round(mfd * 10) / 10,
         isApproved: mfd >= 10.0,
-        reachedTarget: mfd >= target,
+        reachedTarget: mfd >= desiredGrade,
       };
     }
 
@@ -196,7 +200,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
 
     return {
       mode: 'all_empty' as const,
-      neededEachTarget: target,
+      neededEachTarget: desiredGrade,
       neededEachPass: 10.0,
     };
   };
@@ -207,39 +211,57 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       
-      {/* Top Header Card */}
-      <div className="p-6 sm:p-7 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 transition-colors">
-        <div>
-          <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white shadow-lg shadow-amber-500/20 shrink-0">
-              <Target className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white font-heading">
-                Calculadora de "Nota que Falta"
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-                Simule notas necessárias em avaliações ou trimestres restantes (escala 0-20).
-              </p>
-            </div>
+      {/* Top Header Card with Independent Desired Grade (Nota Desejada) Adjuster */}
+      <div className="p-6 sm:p-7 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-5 transition-colors">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white shadow-lg shadow-amber-500/20 shrink-0">
+            <Target className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white font-heading">
+              Calculadora de "Nota que Falta"
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+              Simule a nota necessária para alcançar qualquer resultado sem interferir na meta do perfil.
+            </p>
           </div>
         </div>
 
-        {/* Global Target Adjuster */}
-        <div className="flex items-center gap-3 p-2.5 px-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 self-stretch sm:self-auto shadow-inner">
-          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+        {/* Independent Desired Grade (Nota Desejada) Box */}
+        <div className="flex items-center gap-3 p-3 px-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 shadow-inner">
+          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 whitespace-nowrap">
             <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            <span>Sua Meta (0-20):</span>
+            <span>Nota Desejada:</span>
           </span>
-          <input
-            type="number"
-            min="10"
-            max="20"
-            step="0.5"
-            value={target}
-            onChange={(e) => setTarget(Math.min(20, Math.max(10, parseFloat(e.target.value) || 14)))}
-            className="w-16 px-2.5 py-1 text-center font-extrabold text-sm rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-blue-600 dark:text-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              min="0"
+              max="20"
+              step="0.1"
+              value={desiredGrade}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value);
+                if (!isNaN(val)) {
+                  setDesiredGrade(Math.min(20, Math.max(0, val)));
+                } else if (e.target.value === '') {
+                  setDesiredGrade(0);
+                }
+              }}
+              className="w-16 px-2.5 py-1.5 text-center font-black text-base rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-blue-600 dark:text-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+            />
+            <span className="text-xs font-bold text-slate-400">/ 20</span>
+            {desiredGrade !== defaultTarget && (
+              <button
+                type="button"
+                onClick={() => setDesiredGrade(defaultTarget)}
+                title={`Restaurar meta original do perfil (${defaultTarget.toFixed(1)})`}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors ml-1"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -348,7 +370,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
             {/* Quick Presets */}
             <div className="pt-2">
               <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block mb-2">
-                Exemplos rápidos:
+                Exemplos rápidos de preenchimento:
               </span>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -383,8 +405,8 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-600 dark:text-blue-400 block">
                   Resultado da Previsão
                 </span>
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                  Meta: {target.toFixed(1)} / 20
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800">
+                  Nota Desejada: <strong className="text-blue-600 dark:text-blue-400">{desiredGrade.toFixed(1)}</strong> / 20
                 </span>
               </div>
               <h2 className="text-lg font-extrabold text-slate-900 dark:text-white font-heading">
@@ -406,7 +428,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
                       {quarterResult.neededEachTarget <= 0 ? '0.0' : quarterResult.neededEachTarget.toFixed(1)}
                     </div>
                     <span className="text-xs text-slate-600 dark:text-slate-400 block">
-                      em cada uma das duas notas para atingir média trimestral de <strong>{target.toFixed(1)}</strong>
+                      em cada uma das duas notas para atingir a nota desejada de <strong>{desiredGrade.toFixed(1)}</strong>
                     </span>
                     <div className="mt-3 pt-3 border-t border-blue-200/60 dark:border-blue-800/60 flex items-center justify-center gap-2 text-xs text-slate-600 dark:text-slate-300">
                       <span>Média mínima para aprovação (10.0):</span>
@@ -420,7 +442,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
               {quarterResult.type === 'one_missing' && (
                 <div className="p-6 rounded-3xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-center space-y-3">
                   <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 block">
-                    Para atingir a meta em <strong>{quarterResult.missingField}</strong>:
+                    Para atingir a nota desejada em <strong>{quarterResult.missingField}</strong>:
                   </span>
                   <div className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-cyan-300 font-heading">
                     {quarterResult.neededForTarget <= 0 ? '0.0' : quarterResult.neededForTarget.toFixed(1)}
@@ -429,16 +451,16 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
                     {quarterResult.neededForTarget > 20 ? (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30">
                         <AlertCircle className="w-3.5 h-3.5" />
-                        Meta inalcançável no trimestre (precisaria &gt; 20.0)
+                        Nota desejada inalcançável no trimestre (precisaria &gt; 20.0)
                       </span>
                     ) : quarterResult.neededForTarget <= 0 ? (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30">
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        Meta já garantida! Mesmo com 0 você atinge a meta.
+                        Nota desejada já garantida! Mesmo com 0 você atinge a meta.
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30">
-                        Tirando {quarterResult.neededForTarget.toFixed(1)}, sua média trimestral será {target.toFixed(1)}.
+                        Tirando {quarterResult.neededForTarget.toFixed(1)}, sua média trimestral será {desiredGrade.toFixed(1)}.
                       </span>
                     )}
                   </div>
@@ -463,14 +485,14 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
               {quarterResult.type === 'all_empty' && (
                 <div className="p-8 rounded-3xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-center text-slate-500 dark:text-slate-400 text-xs space-y-2">
                   <Calculator className="w-8 h-8 mx-auto text-slate-400" />
-                  <p>Insira pelo menos 1 nota para ver o cálculo exato.</p>
+                  <p>Insira pelo menos 1 nota para ver o cálculo exato para a nota desejada ({desiredGrade.toFixed(1)}).</p>
                 </div>
               )}
 
             </div>
 
             <div className="text-[11px] text-slate-500 dark:text-slate-400 text-center">
-              Cálculo baseado no sistema pedagógico de 3 avaliações trimestrais.
+              Cálculo baseado no sistema pedagógico de 3 avaliações trimestrais (MT = (P1 + P2 + MAC) / 3).
             </div>
           </div>
 
@@ -571,9 +593,14 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
 
           <div className="lg:col-span-6 p-6 sm:p-7 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl flex flex-col justify-between transition-colors">
             <div>
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 block mb-1">
-                Planeamento da Média Final Anual (MFD)
-              </span>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 block">
+                  Planeamento da Média Final Anual (MFD)
+                </span>
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 px-2.5 py-1 rounded-full bg-cyan-50 dark:bg-cyan-950/60 border border-cyan-200 dark:border-cyan-800">
+                  Nota Desejada: <strong className="text-cyan-600 dark:text-cyan-400">{desiredGrade.toFixed(1)}</strong> / 20
+                </span>
+              </div>
               <h2 className="text-lg font-bold text-slate-900 dark:text-white font-heading">
                 Projeção para Conclusão do Ano Letivo
               </h2>
@@ -589,7 +616,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
                     {annualResult.neededEachTarget.toFixed(1)}
                   </div>
                   <span className="text-xs text-slate-600 dark:text-slate-400 block mt-1">
-                    em cada trimestre para fechar o ano com <strong>{target.toFixed(1)}</strong>
+                    em cada trimestre para fechar o ano com a nota desejada de <strong>{desiredGrade.toFixed(1)}</strong>
                   </span>
                 </div>
                 <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-center">
@@ -613,7 +640,7 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
                 </div>
 
                 <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-center">
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Para a Meta ({target.toFixed(1)})</span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">Para Nota Desejada ({desiredGrade.toFixed(1)})</span>
                   <span className={`text-3xl font-black ${
                     !annualResult.isTargetPossible ? 'text-rose-600 dark:text-rose-400' : 'text-cyan-600 dark:text-cyan-400'
                   }`}>
@@ -638,12 +665,12 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
 
             {annualResult.mode === 'all_empty' && (
               <div className="p-8 rounded-3xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-center text-slate-500 dark:text-slate-400 text-xs my-4">
-                Preencha pelo menos um trimestre para ver a projeção.
+                Preencha pelo menos um trimestre para ver a projeção para a nota desejada ({desiredGrade.toFixed(1)}).
               </div>
             )}
 
             <div className="text-[11px] text-slate-500 dark:text-slate-400 text-center">
-              Previsão calculada com base na média ponderada dos três trimestres.
+              Previsão calculada com base na média dos três trimestres (MFD = (MT1 + MT2 + MT3) / 3).
             </div>
           </div>
 
@@ -653,3 +680,4 @@ export const MissingGradeCalculator: React.FC<MissingGradeCalculatorProps> = ({
     </div>
   );
 };
+

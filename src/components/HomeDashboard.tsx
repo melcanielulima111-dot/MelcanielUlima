@@ -27,7 +27,6 @@ interface HomeDashboardProps {
   onOpenSubjectDetail?: (subject: Subject) => void;
   onOpenQuickCalc: () => void;
   onSelectTab: (tab: ActiveTab) => void;
-  onOpenAi: () => void;
   targetGrade: number;
   lang?: SupportedLanguage;
 }
@@ -38,7 +37,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onOpenAddSubject,
   onOpenQuickCalc,
   onSelectTab,
-  onOpenAi,
   targetGrade,
   lang = 'pt',
 }) => {

@@ -28,6 +28,7 @@ import {
   Eye,
   EyeOff,
   Lock,
+  Unlock,
   Send,
   Inbox,
   Copy,
@@ -46,7 +47,14 @@ import {
   registerWithCloud,
   requestPasswordReset,
   verifyPasswordResetCode,
-  resetPasswordWithCode
+  resetPasswordWithCode,
+  loginWithEmailAndCode,
+  sendEmailVerificationCode,
+  markAccountPermanentlyDeleted,
+  markAccountRemovedFromDevice,
+  unmarkAccountRemovedFromDevice,
+  isAccountRemovedOrDeleted,
+  deleteStudentAccountPermanently
 } from '../utils/cloudSync';
 
 interface StudentAuthScreenProps {
@@ -66,11 +74,12 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
 }) => {
   const t = getTranslation(lang);
 
-  // Load existing registered accounts from localStorage
+  // Load existing registered accounts from localStorage (excluding permanently deleted or removed)
   const [registeredAccounts, setRegisteredAccounts] = useState<StudentProfile[]>(() => {
     try {
       const saved = localStorage.getItem(REGISTERED_ACCOUNTS_KEY);
-      return saved ? JSON.parse(saved) : [];
+      const parsed: StudentProfile[] = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter(a => a && a.id && !isAccountRemovedOrDeleted(a.id, a.email)) : [];
     } catch (e) {
       return [];
     }
@@ -79,12 +88,17 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>(() => {
     try {
       const saved = localStorage.getItem(REGISTERED_ACCOUNTS_KEY);
-      const parsed = saved ? JSON.parse(saved) : [];
-      return parsed.length > 0 ? 'login' : 'register';
+      const parsed: StudentProfile[] = saved ? JSON.parse(saved) : [];
+      const valid = Array.isArray(parsed) ? parsed.filter(a => a && a.id && !isAccountRemovedOrDeleted(a.id, a.email)) : [];
+      return valid.length > 0 ? 'login' : 'register';
     } catch {
       return 'register';
     }
   });
+
+  // Account removal & permanent deletion modal state
+  const [accountToDelete, setAccountToDelete] = useState<StudentProfile | null>(null);
+  const [isDeletingAccountPerm, setIsDeletingAccountPerm] = useState(false);
 
   // Login form state
   const [loginIdentifier, setLoginIdentifier] = useState('');
@@ -131,23 +145,56 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
 
-  // Sync cloud accounts on load so switching phones or clearing cache retains accounts
+  // Sync cloud accounts on load so switching phones or clearing cache retains accounts, while excluding deleted ones
   useEffect(() => {
     fetchCloudAccounts().then((cloudAccounts) => {
       if (cloudAccounts && cloudAccounts.length > 0) {
         setRegisteredAccounts((localAccounts) => {
           const map = new Map<string, StudentProfile>();
-          localAccounts.forEach((acc) => map.set(acc.id, acc));
-          cloudAccounts.forEach((acc) => map.set(acc.id, acc));
+          localAccounts
+            .filter(acc => acc && acc.id && !isAccountRemovedOrDeleted(acc.id, acc.email))
+            .forEach((acc) => map.set(acc.id, acc));
+          cloudAccounts
+            .filter(acc => acc && acc.id && !isAccountRemovedOrDeleted(acc.id, acc.email))
+            .forEach((acc) => map.set(acc.id, acc));
           return Array.from(map.values());
         });
+      }
+
+      // If local accounts exist that might not be in cloud, background sync them
+      const rawStored = localStorage.getItem(REGISTERED_ACCOUNTS_KEY);
+      if (rawStored) {
+        try {
+          const locals: StudentProfile[] = JSON.parse(rawStored);
+          if (Array.isArray(locals)) {
+            locals.forEach((localAcc) => {
+              if (localAcc && localAcc.id && localAcc.email && !isAccountRemovedOrDeleted(localAcc.id, localAcc.email)) {
+                const isCloudPresent = (cloudAccounts || []).some(
+                  ca => ca.id === localAcc.id || (ca.email && ca.email.toLowerCase() === localAcc.email.toLowerCase())
+                );
+                if (!isCloudPresent) {
+                  const localSubjectsRaw = localStorage.getItem(`calfex_subjects_${localAcc.id}`);
+                  const localSubjects = localSubjectsRaw ? JSON.parse(localSubjectsRaw) : [];
+                  registerWithCloud({
+                    profile: localAcc,
+                    subjects: Array.isArray(localSubjects) ? localSubjects : [],
+                    targetGrade: localAcc.targetGrade || 14
+                  }).catch(() => {});
+                }
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('Auto-sync local accounts to cloud error:', e);
+        }
       }
     });
   }, []);
 
-  // Save registered accounts list whenever it changes
+  // Save registered accounts list whenever it changes (always filtered)
   useEffect(() => {
-    localStorage.setItem(REGISTERED_ACCOUNTS_KEY, JSON.stringify(registeredAccounts));
+    const cleanList = registeredAccounts.filter(acc => acc && acc.id && !isAccountRemovedOrDeleted(acc.id, acc.email));
+    localStorage.setItem(REGISTERED_ACCOUNTS_KEY, JSON.stringify(cleanList));
   }, [registeredAccounts]);
 
   // Resend code cooldown countdown
@@ -179,15 +226,14 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
         setForgotMaskedEmail(res.maskedEmail || res.email);
         setForgotStudentName(res.studentName || 'Estudante');
         setForgotStep('verify');
-        setResendCooldown(65);
+        setResendCooldown(75);
         setForgotLoading(false);
 
         if (res.emailSent) {
           setForgotSuccessMsg(`Código de 6 dígitos enviado para ${res.maskedEmail || res.email}!`);
           console.log('[CALFÉX EMAIL STATUS] ✅ Código enviado com sucesso via Gmail para:', res.email);
         } else {
-          console.warn('[CALFÉX EMAIL STATUS] ⚠️ Código gerado mas envio via SMTP pendente de configuração:', res.emailReason || res.message);
-          setForgotError(res.message || 'Código gerado. Verifique as credenciais do Gmail no servidor.');
+          setForgotSuccessMsg(`Código de verificação gerado para ${res.maskedEmail || res.email}.`);
         }
         return;
       } else if (res && !res.success && res.message) {
@@ -208,18 +254,30 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
           setForgotMaskedEmail(masked);
           setForgotStudentName(localFound.name);
           setForgotStep('verify');
-          setResendCooldown(65);
+          setResendCooldown(75);
+          setForgotLoading(false);
+          return;
+        }
+
+        // If it's a valid email format, still allow proceeding to verification step
+        if (term.includes('@') && term.includes('.')) {
+          const atIdx = term.indexOf('@');
+          const masked = atIdx > 2 ? `${term[0]}***${term[atIdx - 1]}${term.substring(atIdx)}` : term;
+          setForgotTargetEmail(term);
+          setForgotMaskedEmail(masked);
+          setForgotStudentName(term.split('@')[0]);
+          setForgotStep('verify');
+          setResendCooldown(75);
           setForgotLoading(false);
           return;
         }
 
         setForgotLoading(false);
         setForgotError(res.message);
-        console.error('[CALFÉX RESET CODE ERROR]', res);
         return;
       }
     } catch (err) {
-      console.warn('Reset request network error:', err);
+      console.warn('Reset request network exception, applying local fallback:', err);
     }
 
     // Local fallback if server had offline or unexpected issue
@@ -240,13 +298,13 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
       setForgotMaskedEmail(masked);
       setForgotStudentName(localFound.name);
       setForgotStep('verify');
-      setResendCooldown(65);
+      setResendCooldown(75);
     } else {
       setForgotError('Nenhuma conta encontrada com essas informações na nuvem nem neste dispositivo. Verifique se digitou corretamente.');
     }
   };
 
-  // Resend code handler
+  // Resend code handler with at least 75 seconds wait time
   const handleResendCode = async () => {
     if (resendCooldown > 0) return;
     setForgotLoading(true);
@@ -254,7 +312,7 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
     try {
       const res = await requestPasswordReset(forgotTargetEmail || forgotIdentifier);
       if (res && res.success) {
-        setResendCooldown(65);
+        setResendCooldown(75);
         if (res.emailSent) {
           setForgotSuccessMsg('Novo código enviado com sucesso para o seu e-mail!');
         } else {
@@ -262,11 +320,11 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
         }
         setTimeout(() => setForgotSuccessMsg(null), 5000);
       } else {
-        setResendCooldown(65);
+        setResendCooldown(75);
         setForgotError(res?.message || 'Falha ao reenviar código.');
       }
     } catch (e) {
-      setResendCooldown(65);
+      setResendCooldown(75);
       setForgotError('Erro de conexão ao reenviar código.');
     }
     setForgotLoading(false);
@@ -357,103 +415,136 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
     setAvatarUrl(undefined);
   };
 
-  // Direct login from saved account card
-  const handleSelectAccount = async (account: StudentProfile) => {
-    // If account has password and user hasn't provided password yet, pre-fill identifier
-    if (account.password && !loginPassword) {
-      setLoginIdentifier(account.email || account.name);
-      setLoginError('Esta conta está protegida por senha. Por favor, digite a sua senha abaixo para entrar.');
-      return;
-    }
-
-    setIsLoggingIn(true);
-    try {
-      const cloudData = await loginWithCloud(account.email || account.id, loginPassword.trim());
-      if (cloudData && cloudData.success && cloudData.student) {
-        if (cloudData.subjects) {
-          localStorage.setItem(`calfex_subjects_${account.id}`, JSON.stringify(cloudData.subjects));
-        }
-        setIsLoggingIn(false);
-        onLoginSuccess(cloudData.student);
-        return;
-      }
-    } catch (e) {
-      console.warn('Direct login fallback to local cache:', e);
-    }
-    setIsLoggingIn(false);
-    onLoginSuccess(account);
+  // Select account from saved list - populates email and clears error
+  const handleSelectAccount = (account: StudentProfile) => {
+    setLoginIdentifier(account.email || account.name);
+    setLoginPassword('');
+    setLoginError(null);
   };
 
-  // Delete saved account from local phone
-  const handleDeleteAccount = (id: string, e: React.MouseEvent) => {
+  // Open confirmation modal for removing or permanently deleting account
+  const handlePromptDeleteAccount = (account: StudentProfile, e: React.MouseEvent) => {
     e.stopPropagation();
+    setAccountToDelete(account);
+  };
+
+  // Remove strictly from this device (keeps safe in cloud for future logins)
+  const handleRemoveFromDeviceOnly = () => {
+    if (!accountToDelete) return;
+    const id = accountToDelete.id;
+    markAccountRemovedFromDevice(id);
     const updated = registeredAccounts.filter(acc => acc.id !== id);
     setRegisteredAccounts(updated);
     localStorage.removeItem(`calfex_subjects_${id}`);
-    setDeviceNotice('Conta removida deste telemóvel. Ela permanece armazenada com segurança na nuvem (como no Facebook) e pode ser acedida a qualquer momento noutro telemóvel ou computador.');
-    setTimeout(() => setDeviceNotice(null), 7000);
+    localStorage.removeItem(`calfex_security_${id}`);
+    localStorage.removeItem(`calfex_pauta_links_${id}`);
+    setAccountToDelete(null);
+    setDeviceNotice('Conta removida deste dispositivo. Ela permanece armazenada com segurança na nuvem e pode ser acedida a qualquer momento com o seu E-mail e Senha.');
+    setTimeout(() => setDeviceNotice(null), 6000);
   };
 
-  // Submit Login Form
+  // Permanently delete from both cloud database and local device (full wipe)
+  const handlePermanentlyDeleteAccount = async () => {
+    if (!accountToDelete) return;
+    setIsDeletingAccountPerm(true);
+    const id = accountToDelete.id;
+    const email = accountToDelete.email;
+    try {
+      await deleteStudentAccountPermanently(id, email);
+      const updated = registeredAccounts.filter(acc => acc.id !== id);
+      setRegisteredAccounts(updated);
+      setAccountToDelete(null);
+      setDeviceNotice('Conta e todos os dados associados foram eliminados definitivamente com sucesso.');
+      setTimeout(() => setDeviceNotice(null), 6000);
+    } catch (e) {
+      console.error('Error permanently deleting account:', e);
+      setDeviceNotice('Erro ao eliminar conta na nuvem. Verifique a sua conexão.');
+    } finally {
+      setIsDeletingAccountPerm(false);
+    }
+  };
+
+  // Submit Login Form - Accepts Email and Password
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
-    const term = loginIdentifier.trim().toLowerCase();
-    if (!term) {
-      setLoginError('Por favor, informe o seu E-mail, Nome ou Nº de Ordem.');
+    const emailOrTerm = loginIdentifier.trim().toLowerCase();
+    const pass = loginPassword.trim();
+
+    if (!emailOrTerm) {
+      setLoginError('Por favor, informe o seu E-mail cadastrado na Calféx.');
+      return;
+    }
+
+    if (!pass) {
+      setLoginError('Por favor, insira a sua Senha de acesso.');
       return;
     }
 
     setIsLoggingIn(true);
 
-    // 1. Try Cloud login first for multi-device sync
+    // 1. Try Login with Email + Password on Server (Cloud Database)
     try {
-      const cloudResult = await loginWithCloud(term, loginPassword.trim());
-      if (cloudResult && cloudResult.success && cloudResult.student) {
-        const profile = cloudResult.student;
-        if (cloudResult.subjects) {
-          localStorage.setItem(`calfex_subjects_${profile.id}`, JSON.stringify(cloudResult.subjects));
+      const res = await loginWithCloud(emailOrTerm, pass);
+      if (res && res.success && res.student) {
+        const student = res.student;
+        if (res.subjects) {
+          localStorage.setItem(`calfex_subjects_${student.id}`, JSON.stringify(res.subjects));
         }
-        // Save to local device accounts
+        // Unmark removed and save to local device accounts
+        unmarkAccountRemovedFromDevice(student.id, student.email);
         setRegisteredAccounts((prev) => {
-          const exists = prev.some(a => a.id === profile.id);
-          return exists ? prev.map(a => a.id === profile.id ? profile : a) : [profile, ...prev];
+          const exists = prev.some(a => a.id === student.id);
+          return exists ? prev.map(a => a.id === student.id ? student : a) : [student, ...prev];
         });
         setIsLoggingIn(false);
-        onLoginSuccess(profile);
+        onLoginSuccess(student);
         return;
-      } else if (cloudResult && !cloudResult.success && cloudResult.message) {
+      } else if (res && !res.success && res.message && !res.message.includes('Nenhuma conta encontrada')) {
+        // If wrong password was explicitly verified on cloud
         setIsLoggingIn(false);
-        setLoginError(cloudResult.message);
+        setLoginError(res.message);
         return;
       }
     } catch (err) {
-      console.warn('Cloud login check fallback:', err);
+      console.warn('Login with email/password network warn:', err);
     }
 
-    // 2. Fallback to local accounts
+    // 2. Fallback to local accounts (e.g. created offline or before cloud sync)
     const found = registeredAccounts.find(
       (acc) =>
-        acc.email.toLowerCase() === term ||
-        acc.name.toLowerCase().includes(term) ||
-        acc.orderNumber.toString() === term
+        (acc.email && acc.email.toLowerCase().trim() === emailOrTerm) ||
+        (acc.name && acc.name.toLowerCase().trim() === emailOrTerm) ||
+        (acc.orderNumber && acc.orderNumber.toString().trim() === emailOrTerm)
     );
 
-    setIsLoggingIn(false);
     if (found) {
-      // If local account has a password, verify it
-      if (found.password && found.password !== loginPassword.trim()) {
-        setLoginError('Senha incorreta para esta conta de estudante. Verifique a senha e tente novamente.');
+      if (found.password && found.password !== pass) {
+        setIsLoggingIn(false);
+        setLoginError('Senha de acesso incorreta. Verifique a senha digitada ou clique em "Esqueci a senha" para recuperar por e-mail.');
         return;
       }
+
+      unmarkAccountRemovedFromDevice(found.id, found.email);
+
+      // Auto sync to cloud in background
+      registerWithCloud({
+        profile: found,
+        subjects: [],
+        targetGrade: found.targetGrade || 14
+      }).catch(() => {});
+
+      setIsLoggingIn(false);
       onLoginSuccess(found);
-    } else {
-      setLoginError('Nenhuma conta encontrada com essas informações na nuvem nem neste dispositivo. Verifique se digitou corretamente ou crie uma nova conta.');
+      return;
     }
+
+    setIsLoggingIn(false);
+    setLoginError('Nenhuma conta encontrada com este e-mail. Verifique os dados digitados ou crie um novo cadastro na aba "Cadastrar".');
   };
 
-  // Submit Registration Form
+  // Submit Registration Form with Permanent Registration Code (Código de Cadastro)
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegisterError(null);
@@ -487,7 +578,7 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
       return;
     }
     if (!acceptedTerms) {
-      setRegisterError('É necessário marcar a caixa concordando com os Termos de Uso e Políticas de Privacidade da CalFéx Pro.');
+      setRegisterError('É necessário marcar a caixa concordando com os Termos de Uso e Políticas de Privacidade da Calféx.');
       return;
     }
 
@@ -502,11 +593,15 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
 
     setIsRegistering(true);
 
+    // Generate unique permanent registration code (Código de Cadastro)
+    const uniqueRegistrationCode = `CFX-${Math.floor(100000 + Math.random() * 900000)}`;
+
     const newProfile: StudentProfile = {
       id: `student-${Date.now()}`,
       name: name.trim(),
       email: email.trim(),
       password: registerPassword.trim(),
+      registrationCode: uniqueRegistrationCode,
       orderNumber: orderNumber.trim(),
       gender,
       classRoom: classRoom.trim(),
@@ -517,6 +612,8 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
       targetGrade: Number(targetGrade) || 14.0,
       registeredAt: new Date().toISOString(),
     };
+
+    unmarkAccountRemovedFromDevice(newProfile.id, newProfile.email);
 
     // Save in cloud database
     try {
@@ -557,7 +654,7 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-heading font-extrabold text-2xl tracking-tight text-slate-900 dark:text-white">
-                  CalFéx <span className="text-blue-600 dark:text-transparent dark:bg-clip-text dark:bg-gradient-to-r dark:from-blue-400 dark:to-cyan-400">Pro</span>
+                  Calféx
                 </span>
                 <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30">
                   0-20 Valores
@@ -640,9 +737,8 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    Contas Disponíveis ({registeredAccounts.length})
+                    Contas Salvas neste Dispositivo ({registeredAccounts.length})
                   </span>
-                  <span className="text-[11px] text-slate-400">Clique para entrar</span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -650,7 +746,11 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
                     <div
                       key={acc.id}
                       onClick={() => handleSelectAccount(acc)}
-                      className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-slate-900/80 transition-all cursor-pointer group flex items-center justify-between shadow-sm"
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer group flex items-center justify-between shadow-sm ${
+                        loginIdentifier.toLowerCase() === (acc.email || '').toLowerCase()
+                          ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-500 ring-2 ring-blue-500/20'
+                          : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800 hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-slate-900/80'
+                      }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         {acc.avatarUrl ? (
@@ -669,7 +769,7 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
                             {acc.name}
                           </h4>
                           <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                            Nº {acc.orderNumber} • {acc.classRoom}
+                            {acc.email || `Nº ${acc.orderNumber} • ${acc.classRoom}`}
                           </p>
                         </div>
                       </div>
@@ -677,13 +777,23 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
                       <div className="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
-                          onClick={(e) => handleDeleteAccount(acc.id, e)}
-                          title="Remover deste telemóvel (mantém na nuvem)"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onLoginSuccess(acc);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold shadow-sm flex items-center gap-1 transition-all"
+                        >
+                          <span>Entrar</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handlePromptDeleteAccount(acc, e)}
+                          title="Remover deste dispositivo ou eliminar definitivamente"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                        <ChevronRight className="w-4 h-4 text-slate-400 dark:text-slate-600 group-hover:text-blue-600 dark:group-hover:text-blue-400 group-hover:translate-x-0.5 transition-all" />
                       </div>
                     </div>
                   ))}
@@ -691,32 +801,39 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
               </div>
             )}
 
-            {/* Login Search / Form */}
+            {/* Login Form with Email and Password */}
             <form onSubmit={handleLoginSubmit} className="space-y-4 pt-2 border-t border-slate-200 dark:border-slate-800/80">
+              
+              {/* 1. Email Field */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  E-mail, Nome ou Nº de Ordem
+                  E-mail do Estudante <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
+                    inputMode="email"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     required
                     value={loginIdentifier}
                     onChange={(e) => {
                       setLoginIdentifier(e.target.value);
                       setLoginError(null);
                     }}
-                    placeholder="Ex: estudante@escola.ao ou 15 ou João Lima"
+                    placeholder="exemplo: seu.email@escola.ao"
                     className="w-full pl-10 pr-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
 
+              {/* 2. Password Field (Required) */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Senha de Acesso
+                    Senha de Acesso <span className="text-rose-500">*</span>
                   </label>
                   <div className="flex items-center gap-3">
                     <button
@@ -738,27 +855,29 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
                       className="text-[11px] text-amber-500 dark:text-amber-400 hover:text-amber-300 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
                     >
                       <KeyRound className="w-3 h-3" />
-                      <span>Esqueci a senha</span>
+                      <span>Esqueci a senha (Recuperar por E-mail)</span>
                     </button>
                   </div>
                 </div>
                 <div className="relative">
-                  <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type={showLoginPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    required
                     value={loginPassword}
                     onChange={(e) => {
                       setLoginPassword(e.target.value);
                       setLoginError(null);
                     }}
-                    placeholder="Digite a sua senha da conta"
+                    placeholder="Digite a senha cadastrada na sua conta"
                     className="w-full pl-10 pr-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
 
               {loginError && (
-                <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2.5">
+                <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 text-rose-700 dark:text-rose-300 text-xs flex items-start gap-2.5 animate-in fade-in">
                   <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
                   <span>{loginError}</span>
                 </div>
@@ -772,12 +891,13 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
                 {isLoggingIn ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>A aceder à conta na nuvem...</span>
+                    <span>A verificar credenciais e entrar...</span>
                   </>
                 ) : (
                   <>
-                    <span>Aceder à Minha Conta</span>
-                    <ArrowRight className="w-4 h-4" />
+                    <Lock className="w-4 h-4" />
+                    <span>Entrar na Conta</span>
+                    <ArrowRight className="w-4 h-4 ml-1" />
                   </>
                 )}
               </button>
@@ -1130,7 +1250,7 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
                   >
                     <span>Políticas de Privacidade</span>
                   </button>
-                  <span> da CalFéx Pro.</span>
+                  <span> da Calféx.</span>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
                     Garante o armazenamento 100% privado das suas notas na memória local do seu dispositivo e a autoria de Melcaniel Ulima.
                   </p>
@@ -1144,7 +1264,7 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
               className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-extrabold text-sm sm:text-base shadow-xl shadow-blue-500/25 transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2.5"
             >
               <ShieldCheck className="w-5 h-5" />
-              <span>Concluir Cadastro & Abrir CalFéx Pro</span>
+              <span>Concluir Cadastro & Abrir Calféx</span>
               <ArrowRight className="w-5 h-5" />
             </button>
 
@@ -1470,7 +1590,7 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
                     Senha Redefinida com Sucesso!
                   </h4>
                   <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                    A sua nova senha foi salva com segurança na nuvem e no dispositivo. Você já pode aceder ao CalFéx Pro.
+                    A sua nova senha foi salva com segurança na nuvem e no dispositivo. Você já pode aceder ao Calféx.
                   </p>
                 </div>
 
@@ -1512,7 +1632,7 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
                     }}
                     className="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-extrabold text-sm shadow-xl shadow-blue-500/25 transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <span>Entrar Imediatamente no CalFéx Pro</span>
+                    <span>Entrar Imediatamente no Calféx</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
 
@@ -1541,6 +1661,85 @@ export const StudentAuthScreen: React.FC<StudentAuthScreenProps> = ({
         isOpen={isTermsModalOpen}
         onClose={() => setIsTermsModalOpen(false)}
       />
+
+      {/* Modal de Confirmação para Remover ou Eliminar Conta do Dispositivo */}
+      {accountToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-3xl p-6 shadow-2xl space-y-4 text-slate-100 animate-in zoom-in-95">
+            
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 text-rose-400" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-white font-heading truncate">
+                  Gerenciar Conta de {accountToDelete.name}
+                </h3>
+                <p className="text-xs text-slate-400 truncate">
+                  {accountToDelete.email || `Nº ${accountToDelete.orderNumber}`}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Escolha como deseja prosseguir com a conta do aluno selecionado:
+            </p>
+
+            <div className="space-y-2.5 pt-1">
+              <button
+                type="button"
+                onClick={handleRemoveFromDeviceOnly}
+                disabled={isDeletingAccountPerm}
+                className="w-full p-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700/90 border border-slate-700 text-left transition-all group cursor-pointer"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white group-hover:text-blue-400 transition-colors">
+                    Remover apenas deste dispositivo
+                  </span>
+                  <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-blue-400" />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  A conta não aparecerá mais nos acessos rápidos deste aparelho, mas permanece salva com segurança na nuvem.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePermanentlyDeleteAccount}
+                disabled={isDeletingAccountPerm}
+                className="w-full p-3.5 rounded-2xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-left transition-all group cursor-pointer disabled:opacity-50"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-rose-300 group-hover:text-rose-200 transition-colors flex items-center gap-1.5">
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span>{isDeletingAccountPerm ? 'A eliminar dados...' : 'Eliminar permanentemente (Tudo)'}</span>
+                  </span>
+                  {isDeletingAccountPerm ? (
+                    <Loader2 className="w-4 h-4 text-rose-400 animate-spin" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-400" />
+                  )}
+                </div>
+                <p className="text-[11px] text-rose-300/80 mt-1">
+                  Exclui definitivamente a conta, notas e disciplinas da nuvem e do dispositivo de forma irreversível.
+                </p>
+              </button>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setAccountToDelete(null)}
+                disabled={isDeletingAccountPerm}
+                className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

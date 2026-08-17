@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { 
   X, 
   Settings, 
@@ -13,21 +13,25 @@ import {
   LogOut, 
   Bot, 
   ChevronDown, 
-  ChevronUp,
-  Lock,
-  KeyRound,
-  Unlock,
-  Eye,
-  EyeOff,
-  AlertCircle,
-  Play,
-  RotateCcw,
-  Trash2,
-  AlertTriangle
+  ChevronUp, 
+  Lock, 
+  KeyRound, 
+  Unlock, 
+  Eye, 
+  EyeOff, 
+  AlertCircle, 
+  Play, 
+  RotateCcw, 
+  Trash2, 
+  AlertTriangle,
+  Cloud,
+  RefreshCw,
+  Copy
 } from 'lucide-react';
 import { StudentProfile, Subject, SupportedLanguage, AppSecuritySettings, SecurityLockType } from '../types';
 import { SUPPORTED_LANGUAGES, getTranslation } from '../utils/i18n';
 import { TermsPolicyModal } from './TermsPolicyModal';
+import { getApiUrl } from '../utils/api';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -39,7 +43,6 @@ interface SettingsModalProps {
   onUpdateTargetGrade: (target: number) => void;
   lang: SupportedLanguage;
   onSelectLanguage: (lang: SupportedLanguage) => void;
-  onOpenAi: () => void;
   onLogout: () => void;
   onDeleteAccount?: (studentId: string) => void;
   securitySettings: AppSecuritySettings;
@@ -57,7 +60,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateTargetGrade,
   lang,
   onSelectLanguage,
-  onOpenAi,
   onLogout,
   onDeleteAccount,
   securitySettings,
@@ -72,6 +74,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Supabase status local state
+  const [supabaseInfo, setSupabaseInfo] = useState<{
+    connected: boolean;
+    tableExists: boolean;
+    message?: string;
+    sqlSetupScript?: string;
+  } | null>(null);
+  const [isCheckingSupabase, setIsCheckingSupabase] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
   // Security config local state
   const [selectedSecurityMode, setSelectedSecurityMode] = useState<SecurityLockType>(
     securitySettings?.mode === 'pin' ? 'pin' : 'none'
@@ -81,13 +93,65 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [showPinText, setShowPinText] = useState(false);
   const [securityMessage, setSecurityMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const checkSupabaseStatus = async () => {
+    setIsCheckingSupabase(true);
+    try {
+      const res = await fetch(getApiUrl('/api/supabase/status'));
+      const data = await res.json();
+      setSupabaseInfo(data);
+    } catch (e) {
+      console.warn('Error fetching Supabase status in modal:', e);
+    } finally {
+      setIsCheckingSupabase(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      checkSupabaseStatus();
+    }
+  }, [isOpen]);
+
+  const handleCopySupabaseSql = () => {
+    const sql = supabaseInfo?.sqlSetupScript || `
+CREATE TABLE IF NOT EXISTS public.calfex_students (
+  id TEXT PRIMARY KEY,
+  email TEXT,
+  name TEXT,
+  order_number TEXT,
+  class_room TEXT,
+  course TEXT,
+  school_name TEXT,
+  academic_year TEXT,
+  gender TEXT,
+  password_hash TEXT,
+  profile JSONB,
+  subjects JSONB,
+  security_settings JSONB,
+  target_grade NUMERIC,
+  schedule JSONB,
+  pauta_links JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.calfex_students ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all access to calfex_students" ON public.calfex_students;
+CREATE POLICY "Allow all access to calfex_students" ON public.calfex_students FOR ALL USING (true) WITH CHECK (true);
+`.trim();
+
+    navigator.clipboard.writeText(sql);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 4000);
+  };
+
   if (!isOpen) return null;
 
   const currentLangObj = SUPPORTED_LANGUAGES.find((l) => l.code === lang) || SUPPORTED_LANGUAGES[0];
 
   const handleExportBackup = () => {
     const data = {
-      app: 'CalFéx Pro',
+      app: 'Calféx',
       version: '2.5',
       exportedAt: new Date().toISOString(),
       student,
@@ -412,6 +476,96 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Supabase Cloud Database Status & 1-Click Setup */}
+          <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Cloud className="w-4 h-4 text-sky-400" />
+                <h4 className="text-xs font-bold text-white">
+                  Base de Dados Supabase (Nuvem)
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={checkSupabaseStatus}
+                disabled={isCheckingSupabase}
+                className="text-[10px] text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1 cursor-pointer"
+              >
+                <RefreshCw className={`w-3 h-3 ${isCheckingSupabase ? 'animate-spin' : ''}`} />
+                <span>Atualizar</span>
+              </button>
+            </div>
+
+            {supabaseInfo && (
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                  <span className="text-slate-400 text-[11px]">Estado da Conexão:</span>
+                  {supabaseInfo.connected ? (
+                    <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px]">
+                      <Check className="w-3.5 h-3.5" /> Conectado ao Supabase
+                    </span>
+                  ) : (
+                    <span className="text-rose-400 font-bold flex items-center gap-1 text-[11px]">
+                      <AlertCircle className="w-3.5 h-3.5" /> Desconectado
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                  <span className="text-slate-400 text-[11px]">Tabela `calfex_students`:</span>
+                  {supabaseInfo.tableExists ? (
+                    <span className="text-emerald-400 font-bold flex items-center gap-1 text-[11px]">
+                      <Check className="w-3.5 h-3.5" /> Criada & Operacional
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 font-bold flex items-center gap-1 text-[11px]">
+                      <AlertTriangle className="w-3.5 h-3.5" /> Pendente de Criação
+                    </span>
+                  )}
+                </div>
+
+                {!supabaseInfo.tableExists && (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-[11px] space-y-2">
+                    <p className="font-semibold flex items-center gap-1.5 text-amber-300">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      Como ativar a gravação na nuvem no Supabase:
+                    </p>
+                    <ol className="list-decimal list-inside space-y-1 text-slate-300">
+                      <li>Acesse o seu painel em <b>supabase.com</b></li>
+                      <li>Clique em <b>SQL Editor</b> no menu lateral esquerdo</li>
+                      <li>Clique no botão abaixo para copiar o comando SQL</li>
+                      <li>Cole no editor do Supabase e clique em <b>Run</b></li>
+                    </ol>
+                    <button
+                      type="button"
+                      onClick={handleCopySupabaseSql}
+                      className="w-full py-2 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md cursor-pointer"
+                    >
+                      {copiedSql ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-900" />
+                          <span>Código SQL Copiado com Sucesso!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copiar Código SQL para o Supabase</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {supabaseInfo.tableExists && (
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>Todas as contas e disciplinas estão a ser salvas automaticamente na nuvem Supabase!</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Backup & Restore Data */}
           <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
             <h4 className="text-xs font-bold text-white">
@@ -466,7 +620,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* System Info & Credits */}
           <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2.5 text-center text-xs text-slate-400">
             <div className="flex items-center justify-center gap-1 font-bold text-white">
-              <span>CalFéx Pro</span>
+              <span>Calféx</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">v2.5</span>
             </div>
             <p className="text-[11px] text-slate-300 font-medium">
@@ -560,7 +714,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <ul className="list-disc pl-4 space-y-1 text-slate-400 text-[11px]">
                 <li>Todas as disciplinas e notas dos 3 trimestres serão removidas.</li>
                 <li>A pauta escolar e estatísticas de rendimento serão excluídas.</li>
-                <li>O histórico de conversas com a IA será limpo.</li>
                 <li>Os dados salvos na nuvem e no dispositivo serão apagados.</li>
               </ul>
             </div>

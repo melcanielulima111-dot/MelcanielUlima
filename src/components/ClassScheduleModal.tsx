@@ -165,7 +165,7 @@ export const ClassScheduleModal: React.FC<ClassScheduleModalProps> = ({
           setNotificationsEnabled(true);
           localStorage.setItem('calfex_notifications_enabled', 'true');
           setNotificationStatus('Notificações de horário ativadas com sucesso!');
-          new Notification('CalFéx Pro • Horário Ativado 🔔', {
+          new Notification('Calféx • Horário Ativado 🔔', {
             body: `Você receberá lembretes automáticos sobre suas disciplinas no dia certo.`,
             icon: '/favicon.ico',
           });
@@ -192,7 +192,7 @@ export const ClassScheduleModal: React.FC<ClassScheduleModalProps> = ({
       : `Hoje (${activeDay}): Nenhuma disciplina agendada no horário.`;
 
     if ('Notification' in window && Notification.permission === 'granted') {
-      new Notification('CalFéx Pro • Lembrete de Aula', {
+      new Notification('Calféx • Lembrete de Aula', {
         body: text,
       });
     } else {

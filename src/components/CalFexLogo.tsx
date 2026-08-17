@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import logoImg from '../assets/images/cal_fex_logo_1786651287673.jpg';
+import logoImg from '../assets/images/calfex_official_logo_1786918930966.jpg';
 import { GraduationCap } from 'lucide-react';
 
 interface CalFexLogoProps {
@@ -35,7 +35,7 @@ export const CalFexLogo: React.FC<CalFexLogoProps> = ({
         {!imgError ? (
           <img
             src={logoImg}
-            alt="CalFéx Pro Logo"
+            alt="Calféx Logo"
             className="w-full h-full object-cover"
             onError={() => setImgError(true)}
           />
@@ -50,10 +50,7 @@ export const CalFexLogo: React.FC<CalFexLogoProps> = ({
         <div className="flex flex-col">
           <div className="flex items-center gap-1">
             <span className="font-heading font-extrabold text-base sm:text-lg tracking-tight text-slate-900 dark:text-white leading-tight">
-              CalFéx
-            </span>
-            <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded-md bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm">
-              Pro
+              Calféx
             </span>
           </div>
           <span className="text-[9px] sm:text-[10px] font-semibold text-slate-500 dark:text-slate-400 hidden sm:block tracking-wide">

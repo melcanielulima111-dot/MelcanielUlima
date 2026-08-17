@@ -15,13 +15,16 @@ import {
   getStoredSecuritySettings, 
   saveSecuritySettings 
 } from './utils/security';
-import { syncStudentDataToCloud, fetchStudentDataFromCloud } from './utils/cloudSync';
+import { 
+  syncStudentDataToCloud, 
+  fetchStudentDataFromCloud,
+  deleteStudentAccountPermanently 
+} from './utils/cloudSync';
+import { getApiUrl } from './utils/api';
 import { Header } from './components/Header';
 import { BottomNavigation } from './components/BottomNavigation';
 import { HomeDashboard } from './components/HomeDashboard';
 import { DisciplinesManagementView } from './components/DisciplinesManagementView';
-import { AiAssistantView } from './components/AiAssistantView';
-import { AiAssistantModal } from './components/AiAssistantModal';
 import { PautaReportView } from './components/PautaReportView';
 import { PerformanceCharts } from './components/PerformanceCharts';
 import { MissingGradeCalculator } from './components/MissingGradeCalculator';
@@ -129,7 +132,6 @@ export default function App() {
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
   const [isQuickCalcOpen, setIsQuickCalcOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
 
   // Enforce permanent Dark Mode throughout the app
@@ -286,14 +288,16 @@ export default function App() {
 
   const handleDeleteAccount = async (studentId: string) => {
     try {
-      // 1. Delete from cloud database backend
-      await fetch(`/api/students/${studentId}`, {
-        method: 'DELETE',
-      }).catch(err => console.warn('Could not delete from backend cloud', err));
+      const email = student?.email;
+      // 1. Permanently delete from Server, Supabase, and blacklist locally
+      await deleteStudentAccountPermanently(studentId, email);
 
-      // 2. Remove student specific data from localStorage
+      // 2. Remove all student specific data from localStorage
       localStorage.removeItem(`calfex_subjects_${studentId}`);
+      localStorage.removeItem(`calfex_security_${studentId}`);
+      localStorage.removeItem(`calfex_pauta_links_${studentId}`);
       localStorage.removeItem(STORAGE_KEYS.ACTIVE_STUDENT);
+      localStorage.removeItem('calfex_active_student');
       localStorage.removeItem('calfex_ai_chat_history');
       localStorage.removeItem('calfex_ai_chat_sessions_v2');
       localStorage.removeItem('calfex_ai_active_session_id_v2');
@@ -303,7 +307,7 @@ export default function App() {
         const savedAccounts = localStorage.getItem('calfex_registered_students_v2');
         if (savedAccounts) {
           const accounts: StudentProfile[] = JSON.parse(savedAccounts);
-          const filtered = accounts.filter(a => a.id !== studentId);
+          const filtered = accounts.filter(a => a.id !== studentId && (!email || (a.email && a.email.toLowerCase() !== email.toLowerCase())));
           localStorage.setItem('calfex_registered_students_v2', JSON.stringify(filtered));
         }
       } catch (e) {
@@ -321,6 +325,7 @@ export default function App() {
       setStudent(null);
       setSubjects([]);
       localStorage.removeItem(STORAGE_KEYS.ACTIVE_STUDENT);
+      localStorage.removeItem('calfex_active_student');
     }
   };
 
@@ -400,7 +405,6 @@ export default function App() {
         onOpenProfile={() => setIsProfileModalOpen(true)}
         onOpenEditProfile={() => setIsRegModalOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenAi={() => setActiveTab('ia')}
         onLogout={handleLogout}
         onQuickPhotoUpload={handleQuickPhotoUpload}
         lang={lang}
@@ -419,7 +423,6 @@ export default function App() {
             onOpenSubjectDetail={(sub) => setEditingSubject(sub)}
             onOpenQuickCalc={() => setIsQuickCalcOpen(true)}
             onSelectTab={setActiveTab}
-            onOpenAi={() => setActiveTab('ia')}
             targetGrade={targetGrade}
             lang={lang}
           />
@@ -438,11 +441,6 @@ export default function App() {
             targetGrade={targetGrade}
             lang={lang}
           />
-        )}
-
-        {/* AI Tutor Assistant Tab */}
-        {activeTab === 'ia' && (
-          <AiAssistantView lang={lang} />
         )}
 
         {/* Pauta Official Report Tab */}
@@ -555,19 +553,11 @@ export default function App() {
         onUpdateTargetGrade={setTargetGrade}
         lang={lang}
         onSelectLanguage={setLang}
-        onOpenAi={() => setActiveTab('ia')}
         onLogout={handleLogout}
         onDeleteAccount={handleDeleteAccount}
         securitySettings={securitySettings}
         onUpdateSecuritySettings={handleUpdateSecuritySettings}
         onLockApp={() => setIsAppLocked(true)}
-      />
-
-      {/* AI Assistant Quick Modal */}
-      <AiAssistantModal
-        isOpen={isAiModalOpen}
-        onClose={() => setIsAiModalOpen(false)}
-        lang={lang}
       />
 
       {/* Class Schedule & Notification Timetable Modal */}

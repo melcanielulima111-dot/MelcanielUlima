@@ -396,7 +396,7 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
                   >
                     Termos de Uso e Políticas de Privacidade
                   </button>
-                  <span> da CalFéx Pro.</span>
+                  <span> da Calféx.</span>
                 </div>
               </label>
             </div>

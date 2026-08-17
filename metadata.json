@@ -1,5 +1,5 @@
 {
-  "name": "CalFéx Pro",
+  "name": "Calféx",
   "description": "Sistema individual de cálculo de médias, acompanhamento de notas T1/T2/T3 e gerador de pautas escolares para estudantes.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

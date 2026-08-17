@@ -29,6 +29,7 @@ export interface StudentProfile {
   name: string;
   email: string;
   password?: string; // Senha da conta do estudante
+  registrationCode?: string; // Código de Cadastro permanente do estudante (ex: "CFX-839201")
   orderNumber: string; // Número de ordem na turma (ex: "14")
   gender: Gender;
   classRoom: string; // Turma / Classe (ex: "11ª Classe - Sala 04")
@@ -110,7 +111,7 @@ export interface PautaSummary {
   finalAcademicStatus: 'Transita (Aprovado)' | 'Aprovado com Distinção' | 'Admitido a Exame' | 'Não Transita' | 'Em Andamento';
 }
 
-export type ActiveTab = 'home' | 'disciplinas' | 'pauta' | 'desempenho' | 'falta' | 'pautanet' | 'ia';
+export type ActiveTab = 'home' | 'disciplinas' | 'pauta' | 'desempenho' | 'falta' | 'pautanet';
 
 export interface PautaLink {
   id: string;

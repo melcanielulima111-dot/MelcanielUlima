@@ -23,7 +23,6 @@ interface HeaderProps {
   onOpenProfile: () => void;
   onOpenEditProfile: () => void;
   onOpenSettings: () => void;
-  onOpenAi: () => void;
   onLogout: () => void;
   onQuickPhotoUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   lang: SupportedLanguage;
@@ -39,7 +38,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenProfile,
   onOpenEditProfile,
   onOpenSettings,
-  onOpenAi,
   onLogout,
   onQuickPhotoUpload,
   lang,

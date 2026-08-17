@@ -131,7 +131,7 @@ export interface TranslationDictionary {
 
 const translations: Record<SupportedLanguage, TranslationDictionary> = {
   pt: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Gestão de Notas e Pautas',
     individualStudent: 'Individual',
     navHome: 'Início',
@@ -177,7 +177,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Sobre o Criador',
     creatorTag: 'Criador & Desenvolvedor',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Jovem programador e estudante angolano visionário, desenvolvedor do CalFéx Pro.',
+    creatorDetails: 'Jovem programador e estudante angolano visionário, desenvolvedor do Calféx.',
     creatorParents: 'Filho de Inocêncio Ulima e Ana Paula Ulima',
     creatorBirth: 'Nascido em 06/10/2010 (6 de Outubro de 2010)',
     settingsTitle: 'Configurações & Idiomas',
@@ -204,7 +204,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   en: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Student Grade & Report Management',
     individualStudent: 'Individual',
     navHome: 'Home',
@@ -250,7 +250,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'About the Creator',
     creatorTag: 'Creator & Developer',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Visionary young Angolan programmer and student, creator of CalFéx Pro.',
+    creatorDetails: 'Visionary young Angolan programmer and student, creator of Calféx.',
     creatorParents: 'Son of Inocêncio Ulima and Ana Paula Ulima',
     creatorBirth: 'Born on October 6, 2010 (06/10/2010)',
     settingsTitle: 'Settings & Languages',
@@ -277,7 +277,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   fr: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Gestion des Notes et Bulletins',
     individualStudent: 'Individuel',
     navHome: 'Accueil',
@@ -323,7 +323,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'À Propos du Créateur',
     creatorTag: 'Créateur & Développeur',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Jeune programmeur et élève angolais talentueux, créateur de CalFéx Pro.',
+    creatorDetails: 'Jeune programmeur et élève angolais talentueux, créateur de Calféx.',
     creatorParents: 'Fils de Inocêncio Ulima et Ana Paula Ulima',
     creatorBirth: 'Né le 06/10/2010 (6 Octobre 2010)',
     settingsTitle: 'Paramètres & 15 Langues',
@@ -350,7 +350,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   es: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Gestión de Notas y Boletines',
     individualStudent: 'Individual',
     navHome: 'Inicio',
@@ -396,7 +396,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Sobre el Creador',
     creatorTag: 'Creador & Desarrollador',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Joven programador y estudiante angoleño, creador de CalFéx Pro.',
+    creatorDetails: 'Joven programador y estudiante angoleño, creador de Calféx.',
     creatorParents: 'Hijo de Inocêncio Ulima y Ana Paula Ulima',
     creatorBirth: 'Nacido el 06/10/2010 (6 de Octubre de 2010)',
     settingsTitle: 'Ajustes & Idiomas',
@@ -423,7 +423,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   de: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Notenverwaltung & Zeugnis',
     individualStudent: 'Individuell',
     navHome: 'Startseite',
@@ -469,7 +469,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Über den Entwickler',
     creatorTag: 'Schöpfer & Entwickler',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Junger angolanischer Programmierer & Schüler, Schöpfer von CalFéx Pro.',
+    creatorDetails: 'Junger angolanischer Programmierer & Schüler, Schöpfer von Calféx.',
     creatorParents: 'Sohn von Inocêncio Ulima und Ana Paula Ulima',
     creatorBirth: 'Geboren am 06.10.2010',
     settingsTitle: 'Einstellungen & Sprachen',
@@ -496,7 +496,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   it: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Gestione Voti e Pagelle',
     individualStudent: 'Individuale',
     navHome: 'Home',
@@ -542,7 +542,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Informazioni sull\'Autore',
     creatorTag: 'Autore & Sviluppatore',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Giovane programmatore e studente angolano, creatore di CalFéx Pro.',
+    creatorDetails: 'Giovane programmatore e studente angolano, creatore di Calféx.',
     creatorParents: 'Figlio di Inocêncio Ulima e Ana Paula Ulima',
     creatorBirth: 'Nato il 06/10/2010 (6 Ottobre 2010)',
     settingsTitle: 'Impostazioni & 15 Lingue',
@@ -569,7 +569,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   umb: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Ocipande co Valolo lo Kuleka',
     individualStudent: 'Umue Posi',
     navHome: 'Ocipito',
@@ -615,7 +615,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Eci catiamẽla k\'Ululiki',
     creatorTag: 'Ululiki & Upongololi',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Ukwenje ulongisi wo Angola walulika CalFéx Pro.',
+    creatorDetails: 'Ukwenje ulongisi wo Angola walulika Calféx.',
     creatorParents: 'Omõla wa Inocêncio Ulima la Ana Paula Ulima',
     creatorBirth: 'Wacitiwa k\'eteke 06/10/2010 (Onyima yo 2010)',
     settingsTitle: 'Ovisila & Alimi 15',
@@ -642,7 +642,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   kmb: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Kifua kia Ilonga ni Mikanda',
     individualStudent: 'Mutu Umoxi',
     navHome: 'Dimatekenu',
@@ -688,7 +688,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Maka ma Musoneki',
     creatorTag: 'Musoneki & Mukua Ngangu',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Munzangala ua Ngola wabange CalFéx Pro.',
+    creatorDetails: 'Munzangala ua Ngola wabange Calféx.',
     creatorParents: 'Mona ua Inocêncio Ulima ni Ana Paula Ulima',
     creatorBirth: 'Avuluka ku kizua 06/10/2010',
     settingsTitle: 'Ilongelu & Mazui 15',
@@ -715,7 +715,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   kik: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Nkanda wa Ntalu za Malongi',
     individualStudent: 'Muntu Mosi',
     navHome: 'Kintete',
@@ -761,7 +761,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Mambu ma Mvangi',
     creatorTag: 'Mvangi & Nsongi',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Nleke wa Ngola wavanga CalFéx Pro.',
+    creatorDetails: 'Nleke wa Ngola wavanga Calféx.',
     creatorParents: 'Mwana wa Inocêncio Ulima ye Ana Paula Ulima',
     creatorBirth: 'Wabutuka mu lumbu 06/10/2010',
     settingsTitle: 'Nsikidisu & Ndinga 15',
@@ -788,7 +788,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   cok: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Mukanda wa Yifukelo ya Shikola',
     individualStudent: 'Munu Umwe',
     navHome: 'Kuputuka',
@@ -834,7 +834,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Maka ja Sakatunga',
     creatorTag: 'Sakatunga & Mwenenyima',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Kanyike wa Ngola watungile CalFéx Pro.',
+    creatorDetails: 'Kanyike wa Ngola watungile Calféx.',
     creatorParents: 'Mwana wa Inocêncio Ulima ni Ana Paula Ulima',
     creatorBirth: 'Wachitukile ha 06/10/2010',
     settingsTitle: 'Yifukelo & Malimi 15',
@@ -861,7 +861,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   ln: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Boyangeli Banoti na Pauta',
     individualStudent: 'Moyi Yekoli',
     navHome: 'Ebandeli',
@@ -907,7 +907,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Mpo na Mokeli',
     creatorTag: 'Mokeli & Motongi',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Elenge ya mayele ya Angola akela CalFéx Pro.',
+    creatorDetails: 'Elenge ya mayele ya Angola akela Calféx.',
     creatorParents: 'Mwana ya Inocêncio Ulima na Ana Paula Ulima',
     creatorBirth: 'Abotama na mokolo ya 06/10/2010',
     settingsTitle: 'Mabongisi & Ndimo 15',
@@ -934,7 +934,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   zh: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: '学生成绩与报告单管理系统',
     individualStudent: '个人版',
     navHome: '首页',
@@ -980,7 +980,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: '关于创作者',
     creatorTag: '创始人与开发者',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: '才华横溢的安哥拉年轻程序员兼学生，CalFéx Pro 的独立开发者。',
+    creatorDetails: '才华横溢的安哥拉年轻程序员兼学生，Calféx 的独立开发者。',
     creatorParents: '父亲：Inocêncio Ulima，母亲：Ana Paula Ulima',
     creatorBirth: '出生日期：2010年10月6日 (06/10/2010)',
     settingsTitle: '系统设置与15国语言',
@@ -1007,7 +1007,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   ru: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'Управление оценками и ведомостями',
     individualStudent: 'Индивидуальный',
     navHome: 'Главная',
@@ -1053,7 +1053,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'Об авторе',
     creatorTag: 'Создатель и разработчик',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'Молодой ангольский программист и студент, создатель CalFéx Pro.',
+    creatorDetails: 'Молодой ангольский программист и студент, создатель Calféx.',
     creatorParents: 'Сын Inocêncio Ulima и Ana Paula Ulima',
     creatorBirth: 'Родился 06.10.2010 (6 октября 2010)',
     settingsTitle: 'Настройки и 15 языков',
@@ -1080,7 +1080,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   ar: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: 'نظام إدارة درجات وتقارير الطلاب',
     individualStudent: 'فردي',
     navHome: 'الرئيسية',
@@ -1126,7 +1126,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: 'عن المطور',
     creatorTag: 'المطور والمنشئ',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'مبرمج وطالب أنغولي شاب متميز، مبتكر تطبيق CalFéx Pro.',
+    creatorDetails: 'مبرمج وطالب أنغولي شاب متميز، مبتكر تطبيق Calféx.',
     creatorParents: 'ابن Inocêncio Ulima و Ana Paula Ulima',
     creatorBirth: 'تاريخ الميلاد: 06/10/2010 (6 أكتوبر 2010)',
     settingsTitle: 'الإعدادات و15 لغة',
@@ -1153,7 +1153,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
   },
 
   ja: {
-    appName: 'CalFéx Pro',
+    appName: 'Calféx',
     appSubtitle: '学生成績・通知表管理システム',
     individualStudent: '個人利用',
     navHome: 'ホーム',
@@ -1199,7 +1199,7 @@ const translations: Record<SupportedLanguage, TranslationDictionary> = {
     aiCreatorInfo: '開発者について',
     creatorTag: '開発者・創設者',
     creatorName: 'Melcaniel Ulima',
-    creatorDetails: 'CalFéx Pro を開発したアンゴラの若きプログラマー兼学生。',
+    creatorDetails: 'Calféx を開発したアンゴラの若きプログラマー兼学生。',
     creatorParents: 'Inocêncio Ulima と Ana Paula Ulima の息子',
     creatorBirth: '生年月日：2010年10月6日 (06/10/2010)',
     settingsTitle: '設定と15言語対応',
